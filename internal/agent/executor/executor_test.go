@@ -148,6 +148,9 @@ func TestFullSuccess(t *testing.T) {
 	if exists(filepath.Join(req.JobDir, pidFile)) {
 		t.Error("pid file left behind")
 	}
+	if exists(filepath.Join(req.JobDir, fifoFile)) {
+		t.Error("fifo left behind")
+	}
 	if fi, _ := os.Stat(job.Path); fi.Mode().Perm() != 0o600 {
 		t.Errorf("data file mode %o", fi.Mode().Perm())
 	}
