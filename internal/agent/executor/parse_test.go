@@ -3,8 +3,11 @@ package executor
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/rodericliu/backup/internal/api"
 )
 
 func TestParseCheckpoints(t *testing.T) {
@@ -71,5 +74,38 @@ func TestLogScannerFullScanOverridesBitmap(t *testing.T) {
 	_, _ = io.WriteString(s, "xtrabackup: using the changed page bitmap\nxtrabackup: using the full scan for incremental backup\n")
 	if s.facts().usedBitmap {
 		t.Error("full scan fallback should not count as bitmap use")
+	}
+}
+
+// TestLogScannerRealFull parses the tail of a real xtrabackup 2.4.28 full
+// backup log.
+func TestLogScannerRealFull(t *testing.T) {
+	b, err := os.ReadFile("testdata/full-2.4.28.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newLogScanner(io.Discard)
+	if _, err := s.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+
+	f := s.facts()
+	if !f.completed {
+		t.Error("completed OK! not detected")
+	}
+	if f.usedBitmap {
+		t.Error("full backup log reported bitmap use")
+	}
+	want := api.SlaveInfo{
+		MasterLogFile: "mysql-bin.009624",
+		MasterLogPos:  994039751,
+		Raw:           "CHANGE MASTER TO MASTER_LOG_FILE='mysql-bin.009624', MASTER_LOG_POS=994039751;",
+	}
+	if f.slave == nil || *f.slave != want {
+		t.Errorf("slave info = %+v, want %+v", f.slave, want)
+	}
+	if tail := s.Tail(1); tail != "261028 06:30:57 completed OK!" {
+		t.Errorf("last line = %q", tail)
 	}
 }

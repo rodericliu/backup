@@ -1,0 +1,19 @@
+261028 06:30:57 Executing FLUSH NO_WRITE_TO_BINLOG ENGINE LOGS...
+xtrabackup: The latest check point (for incremental): '4924565682453'
+xtrabackup: Stopping log copying thread.
+.261028 06:30:57 >> log scanned up to (4924577341689)
+
+261028 06:30:57 Executing UNLOCK BINLOG
+261028 06:30:57 Executing UNLOCK TABLES
+261028 06:30:57 All tables unlocked
+261028 06:30:57 [00] Copying ib_buffer_pool to /data/backup/kmv2_maindb/20261028-0700-chain/00-full/ib_buffer_pool
+261028 06:30:57 [00]        ...done
+261028 06:30:57 Backup created in directory '/data/backup/kmv2_maindb/20261028-0700-chain/00-full/'
+MySQL slave binlog position: master host '10.21.6.9', filename 'mysql-bin.009624', position '994039751', channel name: ''
+
+261028 06:30:57 [00] Writing /data/backup/kmv2_maindb/20261028-0700-chain/00-full/backup-my.cnf
+261028 06:30:57 [00]        ...done
+261028 06:30:57 [00] Writing /data/backup/kmv2_maindb/20261028-0700-chain/00-full/xtrabackup_info
+261028 06:30:57 [00]        ...done
+xtrabackup: Transaction log of lsn (4924426458768) to (4924577341689) was copied.
+261028 06:30:57 completed OK!
