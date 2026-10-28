@@ -45,6 +45,12 @@ systemctl enable --now backup-agent
 
 需要 Go 1.27+ 和 zstd（测试中假的 podman 直接在本机执行容器内命令）。
 
+backup-server 的存储测试需要 PostgreSQL：设置 `BACKUP_TEST_DATABASE_URL` 为一个可以建库的账号，每个测试会创建并删除独立的临时库；未设置时这些测试跳过。
+
+```bash
+export BACKUP_TEST_DATABASE_URL='postgres://localhost:5432/postgres?sslmode=disable'
+```
+
 ```bash
 make test    # go test -race ./...
 make vet

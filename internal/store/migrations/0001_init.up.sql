@@ -1,0 +1,196 @@
+-- Schema of backup-server (PRD 7). All timestamps are UTC; durations are
+-- stored in seconds.
+
+CREATE TABLE users (
+    id                   bigserial PRIMARY KEY,
+    username             text        NOT NULL UNIQUE,
+    password_hash        text        NOT NULL,
+    must_change_password boolean     NOT NULL DEFAULT false,
+    disabled             boolean     NOT NULL DEFAULT false,
+    last_login_at        timestamptz,
+    created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+-- id is the SHA-256 of the session token held by the browser.
+CREATE TABLE sessions (
+    id         text PRIMARY KEY,
+    user_id    bigint      NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL,
+    ip         text        NOT NULL DEFAULT '',
+    user_agent text        NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX sessions_user ON sessions (user_id);
+CREATE INDEX sessions_expires ON sessions (expires_at);
+
+CREATE TABLE hosts (
+    id                     bigserial PRIMARY KEY,
+    name                   text        NOT NULL UNIQUE,
+    hostname               text        NOT NULL DEFAULT '',
+    ip                     text        NOT NULL DEFAULT '',
+    token_hash             text UNIQUE,
+    agent_version          text        NOT NULL DEFAULT '',
+    api_version            integer     NOT NULL DEFAULT 0,
+    backup_root            text        NOT NULL DEFAULT '',
+    last_heartbeat_at      timestamptz,
+    -- disks and changed page bitmaps
+    metrics                jsonb       NOT NULL DEFAULT '{}',
+    containers             jsonb       NOT NULL DEFAULT '[]',
+    -- current job, progress and queue as last reported (PRD 5.3.2)
+    state                  jsonb       NOT NULL DEFAULT '{}',
+    -- bumped whenever the configuration sent to the agent changes (PRD 5.3.4)
+    config_version         bigint      NOT NULL DEFAULT 1,
+    applied_config_version bigint      NOT NULL DEFAULT 0,
+    paused                 boolean     NOT NULL DEFAULT false,
+    revoked_at             timestamptz,
+    created_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE register_tokens (
+    id         bigserial PRIMARY KEY,
+    token_hash text        NOT NULL UNIQUE,
+    note       text        NOT NULL DEFAULT '',
+    expires_at timestamptz NOT NULL,
+    used_at    timestamptz,
+    host_id    bigint REFERENCES hosts (id) ON DELETE SET NULL,
+    created_by bigint REFERENCES users (id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE projects (
+    id                 bigserial PRIMARY KEY,
+    host_id            bigint      NOT NULL REFERENCES hosts (id),
+    name               text        NOT NULL,
+    container          text        NOT NULL,
+    tier               text        NOT NULL,
+    full_interval      integer     NOT NULL,
+    incr_interval      integer     NOT NULL DEFAULT 0,
+    schedule_offset    integer     NOT NULL DEFAULT 0,
+    incr_mode          text        NOT NULL,
+    retention_days     integer     NOT NULL,
+    lag_threshold      integer     NOT NULL,
+    parallel           integer     NOT NULL,
+    throttle           integer     NOT NULL DEFAULT 0,
+    timeout            integer     NOT NULL,
+    retry_count        integer     NOT NULL,
+    retry_interval     integer     NOT NULL,
+    priority           integer     NOT NULL DEFAULT 0,
+    enabled            boolean     NOT NULL DEFAULT true,
+    mysql_user         text        NOT NULL,
+    mysql_password_enc bytea,
+    mysql_socket       text        NOT NULL DEFAULT '',
+    mysql_host         text        NOT NULL DEFAULT '',
+    mysql_port         integer     NOT NULL DEFAULT 0,
+    -- host config_version at the last change of this project
+    config_version     bigint      NOT NULL,
+    -- keep: files expire with retention; purge: delete files immediately (PRD P-7)
+    delete_policy      text,
+    deleted_at         timestamptz,
+    purged_at          timestamptz,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX projects_host_name ON projects (host_id, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX projects_host_container ON projects (host_id, container) WHERE deleted_at IS NULL;
+
+CREATE TABLE chains (
+    id          uuid PRIMARY KEY,
+    host_id     bigint      NOT NULL REFERENCES hosts (id),
+    project_id  bigint REFERENCES projects (id),
+    project     text        NOT NULL,
+    full_job_id uuid,
+    started_at  timestamptz NOT NULL,
+    last_job_at timestamptz,
+    -- running, active, failed, deleted
+    status      text        NOT NULL,
+    deleted_at  timestamptz
+);
+CREATE INDEX chains_project ON chains (project_id, started_at DESC);
+CREATE INDEX chains_host_project ON chains (host_id, project, started_at DESC);
+
+-- id is the UUIDv7 generated by the agent, so replayed reports are idempotent.
+CREATE TABLE jobs (
+    id              uuid PRIMARY KEY,
+    host_id         bigint      NOT NULL REFERENCES hosts (id),
+    project_id      bigint REFERENCES projects (id),
+    project         text        NOT NULL,
+    type            text        NOT NULL,
+    chain_id        uuid,
+    base_job_id     uuid,
+    trigger         text        NOT NULL,
+    status          text        NOT NULL,
+    scheduled_at    timestamptz NOT NULL,
+    started_at      timestamptz,
+    finished_at     timestamptz,
+    raw_size        bigint      NOT NULL DEFAULT 0,
+    compressed_size bigint      NOT NULL DEFAULT 0,
+    from_lsn        numeric(20) NOT NULL DEFAULT 0,
+    to_lsn          numeric(20) NOT NULL DEFAULT 0,
+    slave_info      jsonb,
+    used_bitmap     boolean     NOT NULL DEFAULT false,
+    error_code      text        NOT NULL DEFAULT '',
+    error_message   text        NOT NULL DEFAULT '',
+    log_tail        text        NOT NULL DEFAULT '',
+    path            text        NOT NULL DEFAULT '',
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX jobs_scheduled ON jobs (scheduled_at DESC, id);
+CREATE INDEX jobs_host ON jobs (host_id, scheduled_at DESC);
+CREATE INDEX jobs_project ON jobs (project_id, type, scheduled_at DESC);
+CREATE INDEX jobs_status ON jobs (status, scheduled_at DESC);
+CREATE INDEX jobs_chain ON jobs (chain_id, scheduled_at);
+
+-- seq is the agent's event sequence number, used to drop replayed events.
+CREATE TABLE job_events (
+    id      bigserial PRIMARY KEY,
+    job_id  uuid        NOT NULL,
+    host_id bigint      NOT NULL REFERENCES hosts (id),
+    seq     bigint      NOT NULL,
+    ts      timestamptz NOT NULL,
+    type    text        NOT NULL,
+    payload jsonb       NOT NULL DEFAULT '{}',
+    UNIQUE (host_id, seq)
+);
+CREATE INDEX job_events_job ON job_events (job_id, ts);
+
+-- Complete logs uploaded on request (PRD J-4).
+CREATE TABLE job_logs (
+    job_id      uuid PRIMARY KEY,
+    content     bytea       NOT NULL,
+    uploaded_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE agent_commands (
+    id          bigserial PRIMARY KEY,
+    host_id     bigint      NOT NULL REFERENCES hosts (id),
+    type        text        NOT NULL,
+    payload     jsonb       NOT NULL DEFAULT '{}',
+    -- pending, sent, done, failed, expired
+    status      text        NOT NULL DEFAULT 'pending',
+    created_by  bigint REFERENCES users (id) ON DELETE SET NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    expires_at  timestamptz NOT NULL,
+    acked_at    timestamptz,
+    finished_at timestamptz,
+    result      jsonb
+);
+CREATE INDEX agent_commands_pending ON agent_commands (host_id, id) WHERE status = 'pending';
+
+CREATE TABLE audit_logs (
+    id          bigserial PRIMARY KEY,
+    user_id     bigint REFERENCES users (id) ON DELETE SET NULL,
+    username    text        NOT NULL DEFAULT '',
+    action      text        NOT NULL,
+    target_type text        NOT NULL DEFAULT '',
+    target_id   text        NOT NULL DEFAULT '',
+    detail      jsonb       NOT NULL DEFAULT '{}',
+    ip          text        NOT NULL DEFAULT '',
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX audit_logs_created ON audit_logs (created_at DESC, id DESC);
+
+CREATE TABLE settings (
+    key        text PRIMARY KEY,
+    value      jsonb       NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
