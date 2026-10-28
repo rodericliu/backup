@@ -145,6 +145,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	}
 	now, ip := s.now(), clientIP(r)
 	if s.limiter.blocked(now, req.Username, ip) {
+		s.audit(r, nil, auditLoginBlocked, "user", req.Username, nil)
 		return newError(http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS", "too many failed logins; try again in %s", loginWindow)
 	}
 	u, err := s.store.UserByName(r.Context(), req.Username)
@@ -157,6 +158,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	}
 	if u == nil || u.Disabled || !crypto.CheckPassword(u.PasswordHash, req.Password) {
 		s.limiter.fail(now, req.Username, ip)
+		s.audit(r, nil, auditLoginFailed, "user", req.Username, nil)
 		return newError(http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid username or password")
 	}
 	s.limiter.reset(req.Username)
@@ -177,6 +179,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 		Name: SessionCookie, Value: token, Path: "/", Expires: sess.ExpiresAt,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
+	s.audit(r, u, auditLogin, "user", fmt.Sprint(u.ID), nil)
 	return writeJSON(w, http.StatusOK, u)
 }
 
@@ -196,6 +199,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 		Name: SessionCookie, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
+	u := currentUser(r)
+	s.audit(r, u, auditLogout, "user", fmt.Sprint(u.ID), nil)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -228,6 +233,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err := s.store.DeleteUserSessions(r.Context(), u.ID, sess); err != nil {
 		return err
 	}
+	s.audit(r, u, auditChangePassword, "user", fmt.Sprint(u.ID), nil)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/rodericliu/backup/internal/crypto"
@@ -42,6 +43,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) error {
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		return err
 	}
+	s.audit(r, currentUser(r), auditUserCreate, "user", fmt.Sprint(u.ID), map[string]any{"username": u.Username})
 	return writeJSON(w, http.StatusCreated, u)
 }
 
@@ -65,11 +67,14 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) error {
 		if err := s.store.SetUserDisabled(r.Context(), id, *req.Disabled); err != nil {
 			return err
 		}
+		action := auditUserEnable
 		if *req.Disabled {
+			action = auditUserDisable
 			if err := s.store.DeleteUserSessions(r.Context(), id, ""); err != nil {
 				return err
 			}
 		}
+		s.audit(r, currentUser(r), action, "user", fmt.Sprint(id), nil)
 	}
 	u, err := s.store.User(r.Context(), id)
 	if err != nil {
@@ -102,6 +107,7 @@ func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) error {
 	if err := s.store.DeleteUserSessions(r.Context(), id, ""); err != nil {
 		return err
 	}
+	s.audit(r, currentUser(r), auditUserResetPassword, "user", fmt.Sprint(id), nil)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
