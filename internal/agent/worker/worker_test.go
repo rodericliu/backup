@@ -585,3 +585,32 @@ func TestRecoverKeepsJobsQueuedByThisProcess(t *testing.T) {
 		t.Errorf("queue = %d, want 1", len(s.Queue))
 	}
 }
+
+func TestRecoverConcurrentWithEnqueue(t *testing.T) {
+	for range 20 {
+		e := setup(t, project("gays", 0, 1), project("poppen", time.Hour, 2))
+		var (
+			wg  sync.WaitGroup
+			ids = make(chan uuid.UUID, 20)
+		)
+		for i := range 20 {
+			wg.Go(func() {
+				id, err := e.w.Enqueue(t.Context(), []string{"gays", "poppen"}[i%2], api.JobFull)
+				if err != nil {
+					t.Error(err)
+				}
+				ids <- id
+			})
+		}
+		if err := e.w.recover(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		wg.Wait()
+		close(ids)
+		for id := range ids {
+			if j, _ := e.db.Job(t.Context(), id); j.ErrorCode == api.ErrInterrupted {
+				t.Fatalf("job enqueued by this process recovered as leftover: %s %s", j.Status, j.ErrorCode)
+			}
+		}
+	}
+}

@@ -53,6 +53,11 @@ type Worker struct {
 	projects atomic.Pointer[[]api.ProjectConfig]
 	wake     chan struct{}
 
+	// addMu serializes changes to the queue that are also saved (add and
+	// Cancel) with recover, so that recover never sees a pending job of this
+	// process that is saved but not queued.
+	addMu sync.Mutex
+
 	mu       sync.Mutex
 	queue    []*api.Job
 	current  *running
@@ -194,6 +199,8 @@ func (w *Worker) Enqueue(ctx context.Context, project string, typ api.JobType) (
 // type (PRD S-4). The job is saved before it is queued: once queued, the loop
 // goroutine owns it.
 func (w *Worker) add(ctx context.Context, job *api.Job) {
+	w.addMu.Lock()
+	defer w.addMu.Unlock()
 	w.save(ctx, job)
 	id, at := job.ID, job.ScheduledAt
 	w.mu.Lock()
@@ -245,6 +252,8 @@ func (w *Worker) slot(j *api.Job) schedule.Slot {
 // Cancel cancels a pending or running job (PRD E-11). It reports whether the
 // job was found.
 func (w *Worker) Cancel(ctx context.Context, id uuid.UUID) bool {
+	w.addMu.Lock()
+	defer w.addMu.Unlock()
 	w.mu.Lock()
 	if w.current != nil && w.current.job.ID == id {
 		w.current.cancel(executor.ErrCanceled)
@@ -521,6 +530,8 @@ func (w *Worker) save(ctx context.Context, job *api.Job) {
 func (w *Worker) recover(ctx context.Context) error {
 	db := w.opts.DB
 	now := w.opts.Now()
+	w.addMu.Lock()
+	defer w.addMu.Unlock()
 	jobs, err := db.JobsWithStatus(ctx, api.StatusRunning, api.StatusPending)
 	if err != nil {
 		return err
