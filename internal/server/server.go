@@ -93,6 +93,18 @@ func (s *Server) routes() {
 
 	s.webAPI("GET /audit-logs", s.listAuditLogs)
 
+	s.webAPI("GET /hosts", s.listHosts)
+	s.webAPI("GET /hosts/{id}", s.getHost)
+	s.webAPI("PATCH /hosts/{id}", s.updateHost)
+	s.webAPI("GET /hosts/{id}/containers", s.hostContainers)
+	s.webAPI("POST /hosts/{id}/revoke", s.revokeHost)
+	s.webAPI("GET /register-tokens", s.listRegisterTokens)
+	s.webAPI("POST /register-tokens", s.createRegisterToken)
+	s.webAPI("DELETE /register-tokens/{id}", s.deleteRegisterToken)
+
+	s.agentAPI("POST /register", s.register)
+	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))
+
 	s.tasks = append(s.tasks, task{"delete expired sessions", s.deleteExpiredSessions})
 }
 
@@ -101,6 +113,12 @@ func (s *Server) routes() {
 func (s *Server) webAPI(pattern string, h handlerFunc) {
 	method, path, _ := strings.Cut(pattern, " ")
 	s.web.Handle(method+" "+WebAPIPrefix+path, sameOrigin(s.requireUser(s.handle(h))))
+}
+
+// agentAPI registers an agent API route relative to AgentAPIPrefix.
+func (s *Server) agentAPI(pattern string, h handlerFunc) {
+	method, path, _ := strings.Cut(pattern, " ")
+	s.agent.Handle(method+" "+AgentAPIPrefix+path, s.handle(h))
 }
 
 // WebHandler serves the web UI and the management API.
