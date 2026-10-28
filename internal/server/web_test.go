@@ -171,7 +171,7 @@ func TestScheduleAndDashboard(t *testing.T) {
 	if code := do(t, admin, "GET", e.api("/schedule?"+q.Encode()), nil, &sch); code != http.StatusOK {
 		t.Fatalf("schedule = %d", code)
 	}
-	if len(sch.Runs) != 2*(6+18) || sch.Timezone != "UTC" || !sch.To.Equal(from.Add(24*time.Hour)) {
+	if len(sch.Runs) != 2*(6+18) || sch.Timezone != "UTC (UTC+00:00)" || !sch.To.Equal(from.Add(24*time.Hour)) {
 		t.Errorf("runs = %d, schedule = %+v", len(sch.Runs), sch.Hours)
 	}
 	overloaded := 0
