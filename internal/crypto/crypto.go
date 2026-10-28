@@ -135,8 +135,8 @@ func EqualHash(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// PasswordCost is the bcrypt cost of password hashes.
-const PasswordCost = 12
+// PasswordCost is the bcrypt cost of new password hashes. Tests may lower it.
+var PasswordCost = 12
 
 // MinPasswordLength is the minimum length of user passwords.
 const MinPasswordLength = 10

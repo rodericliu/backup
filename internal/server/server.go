@@ -47,7 +47,8 @@ type Server struct {
 	web   *http.ServeMux
 	agent *http.ServeMux
 	// tasks run every minute in the background.
-	tasks []task
+	tasks   []task
+	limiter loginLimiter
 }
 
 type task struct {
@@ -79,6 +80,25 @@ func New(opts Options) *Server {
 func (s *Server) routes() {
 	s.web.Handle("GET /healthz", s.handle(s.healthz))
 	s.agent.Handle("GET /healthz", s.handle(s.healthz))
+
+	s.web.Handle("POST "+WebAPIPrefix+"/auth/login", sameOrigin(s.handle(s.login)))
+	s.webAPI("POST /auth/logout", s.logout)
+	s.webAPI("GET /auth/me", s.me)
+	s.webAPI("POST /auth/password", s.changePassword)
+
+	s.webAPI("GET /users", s.listUsers)
+	s.webAPI("POST /users", s.createUser)
+	s.webAPI("PATCH /users/{id}", s.updateUser)
+	s.webAPI("POST /users/{id}/password", s.resetPassword)
+
+	s.tasks = append(s.tasks, task{"delete expired sessions", s.deleteExpiredSessions})
+}
+
+// webAPI registers an authenticated web API route; pattern is
+// "METHOD /path" relative to WebAPIPrefix.
+func (s *Server) webAPI(pattern string, h handlerFunc) {
+	method, path, _ := strings.Cut(pattern, " ")
+	s.web.Handle(method+" "+WebAPIPrefix+path, sameOrigin(s.requireUser(s.handle(h))))
 }
 
 // WebHandler serves the web UI and the management API.

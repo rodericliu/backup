@@ -10,11 +10,16 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rodericliu/backup/internal/crypto"
 	"github.com/rodericliu/backup/internal/server/config"
@@ -22,13 +27,48 @@ import (
 	"github.com/rodericliu/backup/internal/store/storetest"
 )
 
+func TestMain(m *testing.M) {
+	crypto.PasswordCost = bcrypt.MinCost
+	os.Exit(m.Run())
+}
+
 type testEnv struct {
 	t     *testing.T
 	store *store.Store
 	srv   *Server
 	web   *httptest.Server
 	agent *httptest.Server
+	clock *clock
 }
+
+type clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *clock) Add(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
+// browser returns a client of the web listener with its own cookie jar.
+func (e *testEnv) browser() *http.Client {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return &http.Client{Transport: e.web.Client().Transport, Jar: jar}
+}
+
+// api returns the URL of a web API path.
+func (e *testEnv) api(path string) string { return e.web.URL + WebAPIPrefix + path }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
@@ -41,10 +81,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &testEnv{t: t, store: st}
-	e.srv = New(Options{Store: st, Sealer: sealer, Config: cfg, Logger: slog.New(slog.DiscardHandler)})
-	e.web = httptest.NewServer(e.srv.WebHandler())
-	e.agent = httptest.NewServer(e.srv.AgentHandler())
+	e := &testEnv{t: t, store: st, clock: &clock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}}
+	e.srv = New(Options{Store: st, Sealer: sealer, Config: cfg, Logger: slog.New(slog.DiscardHandler), Now: e.clock.Now})
+	e.web = httptest.NewTLSServer(e.srv.WebHandler())
+	e.agent = httptest.NewTLSServer(e.srv.AgentHandler())
 	t.Cleanup(e.web.Close)
 	t.Cleanup(e.agent.Close)
 	return e
@@ -72,9 +112,6 @@ func do(t *testing.T, c *http.Client, method, url string, body, out any, header 
 	for i := 0; i+1 < len(header); i += 2 {
 		req.Header.Set(header[i], header[i+1])
 	}
-	if c == nil {
-		c = http.DefaultClient
-	}
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -94,22 +131,22 @@ func do(t *testing.T, c *http.Client, method, url string, body, out any, header 
 
 func TestHealthz(t *testing.T) {
 	e := newTestEnv(t)
-	for _, base := range []string{e.web.URL, e.agent.URL} {
+	for _, ts := range []*httptest.Server{e.web, e.agent} {
 		var h health
-		if code := do(t, nil, "GET", base+"/healthz", nil, &h); code != http.StatusOK || h.Status != "ok" {
-			t.Errorf("%s/healthz = %d %+v", base, code, h)
+		if code := do(t, ts.Client(), "GET", ts.URL+"/healthz", nil, &h); code != http.StatusOK || h.Status != "ok" {
+			t.Errorf("%s/healthz = %d %+v", ts.URL, code, h)
 		}
 	}
 	e.store.Close()
 	var h health
-	if code := do(t, nil, "GET", e.web.URL+"/healthz", nil, &h); code != http.StatusServiceUnavailable || h.Status != "unavailable" {
+	if code := do(t, e.web.Client(), "GET", e.web.URL+"/healthz", nil, &h); code != http.StatusServiceUnavailable || h.Status != "unavailable" {
 		t.Errorf("healthz without database = %d %+v", code, h)
 	}
 }
 
 func TestErrors(t *testing.T) {
 	e := newTestEnv(t)
-	resp, err := http.Get(e.web.URL + "/healthz")
+	resp, err := e.web.Client().Get(e.web.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +154,7 @@ func TestErrors(t *testing.T) {
 	if resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Error("security headers missing on the web listener")
 	}
-	if code := do(t, nil, "GET", e.web.URL+AgentAPIPrefix+"/config", nil, nil); code != http.StatusNotFound {
+	if code := do(t, e.web.Client(), "GET", e.web.URL+AgentAPIPrefix+"/config", nil, nil); code != http.StatusNotFound {
 		t.Errorf("agent API on the web listener = %d, want 404", code)
 	}
 }
@@ -191,3 +228,5 @@ func TestRun(t *testing.T) {
 		}
 	}
 }
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
