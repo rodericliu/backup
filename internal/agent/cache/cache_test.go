@@ -209,6 +209,10 @@ func TestEvents(t *testing.T) {
 		t.Fatalf("events = %+v, %v", events, err)
 	}
 
+	if seq, err := db.LastEventSeq(ctx); err != nil || seq != events[2].Seq {
+		t.Errorf("LastEventSeq = %d, %v", seq, err)
+	}
+
 	pending, err := db.PendingEvents(ctx, 2)
 	if err != nil || len(pending) != 2 {
 		t.Fatalf("pending = %d, %v", len(pending), err)

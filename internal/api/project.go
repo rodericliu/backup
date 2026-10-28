@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 )
@@ -37,6 +38,29 @@ type MySQLConfig struct {
 	Socket string `json:"socket,omitzero" yaml:"socket"`
 	Host   string `json:"host,omitzero" yaml:"host"`
 	Port   int    `json:"port,omitzero" yaml:"port"`
+}
+
+// String hides the password when the config is printed with fmt.
+func (m MySQLConfig) String() string {
+	return fmt.Sprintf("{User:%s Password:%s Socket:%s Host:%s Port:%d}", m.User, redacted(m.Password), m.Socket, m.Host, m.Port)
+}
+
+// LogValue hides the password when the config is logged with slog.
+func (m MySQLConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("user", m.User),
+		slog.String("password", redacted(m.Password)),
+		slog.String("socket", m.Socket),
+		slog.String("host", m.Host),
+		slog.Int("port", m.Port),
+	)
+}
+
+func redacted(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "[REDACTED]"
 }
 
 // ProjectConfig is the backup configuration of one MySQL replica container
@@ -84,6 +108,22 @@ func Template(t Tier) ProjectConfig {
 		p.IncrInterval = Duration(time.Hour)
 	}
 	return p
+}
+
+// LogValue logs the scheduling parameters without the MySQL password.
+func (p ProjectConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("name", p.Name),
+		slog.String("container", p.Container),
+		slog.String("tier", string(p.Tier)),
+		slog.String("full_interval", p.FullInterval.String()),
+		slog.String("incr_interval", p.IncrInterval.String()),
+		slog.String("offset", p.Offset.String()),
+		slog.String("incr_mode", string(p.IncrMode)),
+		slog.Int("priority", p.Priority),
+		slog.Bool("disabled", p.Disabled),
+		slog.Any("mysql", p.MySQL),
+	)
 }
 
 // Enabled reports whether the project should be scheduled.

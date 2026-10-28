@@ -561,3 +561,8 @@ func (w *Worker) recover(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Projects returns a copy of the current project configuration.
+func (w *Worker) Projects() []api.ProjectConfig {
+	return slices.Clone(*w.projects.Load())
+}
