@@ -102,6 +102,15 @@ func (s *Server) routes() {
 	s.webAPI("POST /register-tokens", s.createRegisterToken)
 	s.webAPI("DELETE /register-tokens/{id}", s.deleteRegisterToken)
 
+	s.webAPI("GET /project-templates", s.projectTemplates)
+	s.webAPI("GET /projects", s.listProjects)
+	s.webAPI("POST /projects", s.createProject)
+	s.webAPI("POST /projects/recommend-offset", s.recommendOffset)
+	s.webAPI("GET /projects/{id}", s.getProject)
+	s.webAPI("PUT /projects/{id}", s.updateProject)
+	s.webAPI("PATCH /projects/{id}", s.patchProject)
+	s.webAPI("DELETE /projects/{id}", s.deleteProject)
+
 	s.agentAPI("POST /register", s.register)
 	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))
 
