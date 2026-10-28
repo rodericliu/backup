@@ -103,13 +103,8 @@ type Request struct {
 	Progress func(Progress)
 }
 
-// Progress is a sample of a running backup (PRD E-6). Compression runs inside
-// the container, so only the size of the data file is known.
-type Progress struct {
-	CompressedBytes int64        `json:"compressed_bytes"`
-	BytesPerSecond  float64      `json:"bytes_per_second"`
-	Elapsed         api.Duration `json:"elapsed"`
-}
+// Progress is a sample of a running backup (PRD E-6).
+type Progress = api.Progress
 
 // failure is a classified job failure.
 type failure struct {

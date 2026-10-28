@@ -199,3 +199,26 @@ func TestJobReports(t *testing.T) {
 		t.Errorf("events from another host = %d", code)
 	}
 }
+
+func TestHistoryBeforeProject(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.admin()
+	token, hostID := e.setupHost(admin)
+	t0 := e.clock.Now().Add(-48 * time.Hour)
+	old := api.Job{ID: uuid.NewV7(), Project: "gays", Type: api.JobFull, ChainID: uuid.NewV7(), Trigger: api.TriggerSchedule,
+		Status: api.StatusSuccess, ScheduledAt: t0, StartedAt: t0, FinishedAt: t0.Add(time.Minute)}
+	if code := e.agentDo(token, "PUT", "/jobs/"+old.ID.String(), old, nil); code != http.StatusNoContent {
+		t.Fatalf("put = %d", code)
+	}
+	if j, _ := e.store.Job(t.Context(), old.ID); j.ProjectID != 0 {
+		t.Fatalf("job attached to project %d before it exists", j.ProjectID)
+	}
+	var p ProjectView
+	do(t, admin, "POST", e.api("/projects"), projectBody(hostID, "gays", "gays_maindb_slave", nil), &p)
+	if j, _ := e.store.Job(t.Context(), old.ID); j.ProjectID != p.ID {
+		t.Errorf("job project = %d, want %d", j.ProjectID, p.ID)
+	}
+	if c, _ := e.store.Chain(t.Context(), old.ChainID); c.ProjectID != p.ID {
+		t.Errorf("chain project = %d, want %d", c.ProjectID, p.ID)
+	}
+}

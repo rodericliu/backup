@@ -1,10 +1,11 @@
 # /etc/backup-agent/agent.yaml (chmod 600: contains MySQL passwords)
 
-# P2: server connection. Leave server_url empty to run standalone with the
-# projects below.
-server_url: ""
-server_ca: /etc/backup-agent/tls/ca.crt
-register_token_file: /etc/backup-agent/register.token
+# Connection to backup-server (agent_listen port). When server_url is set the
+# projects come from the server and the projects below are ignored; leave it
+# empty to run standalone with the projects below.
+server_url: ""                   # https://backup-server.internal:9443
+server_ca: /etc/backup-agent/tls/ca.crt          # ca.crt from `backup-server cert init`
+register_token_file: /etc/backup-agent/register.token   # one-time token generated on the web
 
 state_dir: /var/lib/backup-agent
 backup_root: /data/backup        # mounted at the same path in every container

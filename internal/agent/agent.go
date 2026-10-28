@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rodericliu/backup/internal/agent/cache"
+	"github.com/rodericliu/backup/internal/agent/client"
 	"github.com/rodericliu/backup/internal/agent/config"
 	"github.com/rodericliu/backup/internal/agent/executor"
 	"github.com/rodericliu/backup/internal/agent/mysql"
@@ -29,11 +31,14 @@ const (
 
 // Agent is a running backup agent.
 type Agent struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	db     *cache.DB
-	podman *podman.Client
-	worker *worker.Worker
+	cfg     *config.Config
+	log     *slog.Logger
+	db      *cache.DB
+	podman  *podman.Client
+	worker  *worker.Worker
+	cleaner *retention.Cleaner
+	// link is the connection to backup-server; nil when running standalone.
+	link   *link
 	unlock func() error
 }
 
@@ -63,26 +68,61 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Agent, err
 			LowIOPriority: cfg.LowIOPriority,
 		},
 	}
-	w := worker.New(worker.Options{
+	a := &Agent{cfg: cfg, log: log, db: db, podman: pc, unlock: unlock,
+		cleaner: &retention.Cleaner{Store: db, Root: cfg.BackupRoot, Logger: log}}
+	a.worker = worker.New(worker.Options{
 		DB:       db,
 		Runner:   exe,
-		Cleaner:  &retention.Cleaner{Store: db, Root: cfg.BackupRoot, Logger: log},
+		Cleaner:  a.cleaner,
 		Root:     cfg.BackupRoot,
 		Location: cfg.Location,
 		Logger:   log,
+		OnChange: func() {
+			if a.link != nil {
+				wake(a.link.reportWake)
+			}
+		},
 	})
-	a := &Agent{cfg: cfg, log: log, db: db, podman: pc, worker: w, unlock: unlock}
+	if cfg.ServerURL != "" {
+		c, err := client.New(cfg.ServerURL, cfg.ServerCA)
+		if err != nil {
+			return nil, errors.Join(err, a.Close())
+		}
+		a.link = newLink(a, c)
+	}
 	projects, err := a.projects(ctx, cfg)
 	if err != nil {
 		return nil, errors.Join(err, a.Close())
 	}
-	w.SetProjects(projects)
+	a.worker.SetProjects(projects)
 	return a, nil
 }
 
-// projects returns the locally configured projects or, when there are none,
-// the configuration cached from the server.
+// projects returns the configuration cached from the server when connected to
+// one (PRD 5.3.4); otherwise the locally configured projects or, when there
+// are none, the cached configuration.
 func (a *Agent) projects(ctx context.Context, cfg *config.Config) ([]api.ProjectConfig, error) {
+	if a.link != nil {
+		if len(cfg.Projects) > 0 {
+			a.log.Warn("server_url is set: projects in the configuration file are ignored; the server configuration applies")
+		}
+		version, projects, err := a.db.LoadConfig(ctx)
+		switch {
+		case errors.Is(err, cache.ErrNotFound):
+			a.log.Warn("no configuration received from backup-server yet; no backups run until it is fetched")
+			return nil, nil
+		case err != nil:
+			return nil, err
+		}
+		paused, err := a.db.Meta(ctx, metaPaused)
+		if err != nil {
+			return nil, err
+		}
+		a.worker.SetPaused(paused == "true")
+		a.link.applied.Store(version)
+		a.log.Info("using configuration cached from backup-server", "version", version, "projects", len(projects), "paused", paused == "true")
+		return projects, nil
+	}
 	if len(cfg.Projects) > 0 {
 		a.log.Info("using projects from configuration file", "projects", len(cfg.Projects))
 		return cfg.Projects, nil
@@ -116,13 +156,16 @@ func (a *Agent) Reload(ctx context.Context, cfg *config.Config) error {
 
 // Run executes backups until ctx is done.
 func (a *Agent) Run(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		a.monitor(ctx)
-	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Go(func() { a.monitor(ctx) })
+	if a.link != nil {
+		wg.Go(func() { a.link.run(ctx) })
+	}
 	err := a.worker.Run(ctx)
-	<-done
+	cancel()
+	wg.Wait()
 	return err
 }
 
@@ -174,12 +217,15 @@ func (a *Agent) checkBitmap(ctx context.Context, p *api.ProjectConfig) error {
 			a.log.Error("remove credentials file", "err", err)
 		}
 	}()
-	client := &mysql.Client{Exec: a.podman, Container: p.Container, Defaults: defaults}
-	on, err := client.TrackChangedPages(ctx)
+	mc := &mysql.Client{Exec: a.podman, Container: p.Container, Defaults: defaults}
+	on, err := mc.TrackChangedPages(ctx)
 	if err != nil || !on {
 		return err
 	}
-	_, err = retention.CheckBitmap(ctx, client, a.cfg.BitmapAlertSize, a.log, p.Name)
+	size, err := retention.CheckBitmap(ctx, mc, a.cfg.BitmapAlertSize, a.log, p.Name)
+	if err == nil && a.link != nil {
+		a.link.setBitmap(p.Name, size)
+	}
 	return err
 }
 

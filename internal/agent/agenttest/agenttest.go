@@ -19,6 +19,7 @@ container)
   state=running; running=true
   [ "$FAKE_CONTAINER" = stopped ] && { state=exited; running=false; }
   printf '[{"Id":"id1","Name":"%s","State":{"Status":"%s","Running":%s}}]' "$5" "$state" "$running" ;;
+ps) echo "${FAKE_PS:-gays_maindb_slave}" ;;
 exec)
   shift
   [ "$1" = --user ] && shift 2
@@ -95,7 +96,8 @@ echo "$(date) completed OK!" >&2
 // and returns the fake podman binary and the directory where the fakes record
 // their calls (mysql.log, xtrabackup.args). Behavior is selected with the
 // environment variables FAKE_XB (""|slow|nobitmap|fail|stopsql|hang|nook),
-// FAKE_CONTAINER (""|missing|stopped) and FAKE_REPL (""|broken). It skips the
+// FAKE_CONTAINER (""|missing|stopped) and FAKE_REPL (""|broken); `podman ps`
+// lists the single container FAKE_PS (default gays_maindb_slave). It skips the
 // test when zstd is not installed.
 func Install(t *testing.T) (podman, dir string) {
 	t.Helper()

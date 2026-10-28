@@ -32,12 +32,7 @@ type Cleaner struct {
 }
 
 // CleanupEvent is recorded on a deleted chain's full job (PRD R-3).
-type CleanupEvent struct {
-	ChainID string    `json:"chain_id"`
-	Dir     string    `json:"dir"`
-	LastAt  time.Time `json:"last_at"`
-	Reason  string    `json:"reason"`
-}
+type CleanupEvent = api.CleanupEvent
 
 // Clean deletes chains whose newest backup is older than the project's
 // retention, never touching the newest chain or the newest chain whose full
@@ -70,20 +65,29 @@ func (c *Cleaner) Clean(ctx context.Context, p *api.ProjectConfig) ([]cache.Chai
 	return deleted, errors.Join(errs...)
 }
 
-// DeleteAll removes every chain of a project, used when a project is deleted
-// together with its files (PRD P-7).
-func (c *Cleaner) DeleteAll(ctx context.Context, project string) error {
+// Purge removes the chains of a deleted project that started before before
+// (PRD P-7). Chains started later belong to a new project of the same name
+// and are kept. It returns the number of deleted chains.
+func (c *Cleaner) Purge(ctx context.Context, project string, before time.Time) (int, error) {
 	chains, err := c.Store.Chains(ctx, project)
 	if err != nil {
-		return fmt.Errorf("list chains: %w", err)
+		return 0, fmt.Errorf("list chains: %w", err)
 	}
-	var errs []error
+	var (
+		n    int
+		errs []error
+	)
 	for i := range chains {
+		if !chains[i].StartedAt.Before(before) {
+			continue
+		}
 		if err := c.delete(ctx, project, &chains[i], lastBackupAt(&chains[i]), "project deleted"); err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		n++
 	}
-	return errors.Join(errs...)
+	return n, errors.Join(errs...)
 }
 
 // protected marks the newest chain, which may still receive backups, and the

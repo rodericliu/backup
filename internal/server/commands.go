@@ -108,11 +108,20 @@ func (s *Server) pollCommands(w http.ResponseWriter, r *http.Request) error {
 			for i := range cmds {
 				c, err := s.deliverable(&cmds[i])
 				if err != nil {
-					return err
+					// Fail the command instead of the whole poll.
+					s.log.Error("cannot deliver command", "command", cmds[i].ID, "err", err)
+					res, _ := json.Marshal(api.CommandResult{Message: "server could not deliver the command: " + err.Error()})
+					if _, err := s.store.FinishCommand(r.Context(), h.ID, cmds[i].ID, false, res, s.now()); err != nil {
+						return err
+					}
+					continue
 				}
 				out = append(out, *c)
 			}
-			return writeJSON(w, http.StatusOK, out)
+			if len(out) > 0 {
+				return writeJSON(w, http.StatusOK, out)
+			}
+			continue
 		}
 		select {
 		case <-woken:
@@ -136,6 +145,9 @@ func (s *Server) deliverable(c *store.Command) (*api.Command, error) {
 	}
 	if err := json.Unmarshal(c.Payload, &stored); err != nil {
 		return nil, fmt.Errorf("decode command %d: %w", c.ID, err)
+	}
+	if stored.Secret == "" {
+		return out, nil
 	}
 	sealed, err := base64.StdEncoding.DecodeString(stored.Secret)
 	if err != nil {
@@ -344,8 +356,8 @@ func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) error {
 		api.TestConnectionPayload
 		Secret string `json:"secret_enc"`
 	}{
-		TestConnectionPayload: api.TestConnectionPayload{Project: req.ProjectConfig},
-		Secret:                base64.StdEncoding.EncodeToString(s.sealer.Seal([]byte(password), commandAAD)),
+		Project: req.ProjectConfig,
+		Secret:  base64.StdEncoding.EncodeToString(s.sealer.Seal([]byte(password), commandAAD)),
 	}
 	c, err := s.sendCommand(r.Context(), currentUser(r), h.ID, api.CmdTestConnection, payload, testConnectionTTL)
 	if err != nil {
