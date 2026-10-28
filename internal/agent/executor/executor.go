@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rodericliu/backup/internal/agent/mysql"
 	"github.com/rodericliu/backup/internal/agent/podman"
 	"github.com/rodericliu/backup/internal/api"
@@ -35,6 +37,7 @@ const (
 	LogFile         = "backup.log"
 	MetaFile        = "meta.json"
 	pidFile         = "xtrabackup.pid"
+	fifoFile        = "xtrabackup.fifo"
 )
 
 // CredentialsDir is the directory below the backup root that holds temporary
@@ -271,13 +274,15 @@ func (r *run) xtrabackupArgs() []string {
 }
 
 // containerScript records the shell's PID, which becomes xtrabackup's PID
-// after exec, so that the process can be killed inside the container.
+// after exec, so that the process can be killed inside the container. Its
+// arguments are the PID file, the FIFO receiving the stream and xtrabackup's
+// arguments.
 func (r *run) containerScript() string {
-	prio := `exec xtrabackup "$@"`
+	prio := `exec xtrabackup "$@" > "$out"`
 	if r.e.Opts.LowIOPriority {
-		prio = `if command -v ionice >/dev/null 2>&1; then exec ionice -c3 nice -n 19 xtrabackup "$@"; fi; exec nice -n 19 xtrabackup "$@"`
+		prio = `if command -v ionice >/dev/null 2>&1; then exec ionice -c3 nice -n 19 xtrabackup "$@" > "$out"; fi; exec nice -n 19 xtrabackup "$@" > "$out"`
 	}
-	return `echo $$ > "$0"; ` + prio
+	return `echo $$ > "$0"; out=$1; shift; ` + prio
 }
 
 func (r *run) zstdCommand(ctx context.Context) *exec.Cmd {
@@ -322,35 +327,78 @@ func (r *run) backup(ctx context.Context) error {
 	}
 	defer out.Close()
 
+	// xtrabackup writes its stream into a FIFO in the job directory, which is
+	// mounted at the same path in the container, so the stream does not pass
+	// through conmon and the podman client. The read end is opened first
+	// without blocking; hold keeps a writer so that the read end only reports
+	// EOF once xtrabackup has exited, even if it never opened the FIFO.
+	fifoPath := filepath.Join(dir, fifoFile)
+	_ = os.Remove(fifoPath)
+	if err := unix.Mkfifo(fifoPath, 0o600); err != nil {
+		return fail(api.ErrCompress, "create fifo: %v", err)
+	}
+	defer os.Remove(fifoPath)
+	stream, err := openFIFOReader(fifoPath)
+	if err != nil {
+		return fail(api.ErrCompress, "open fifo: %v", err)
+	}
+	defer stream.Close()
+	hold, err := os.OpenFile(fifoPath, os.O_WRONLY, 0)
+	if err != nil {
+		return fail(api.ErrCompress, "open fifo: %v", err)
+	}
+	defer hold.Close()
+	growPipe(stream)
+
+	zsIn, zsInW, err := os.Pipe()
+	if err != nil {
+		return fail(api.ErrCompress, "%v", err)
+	}
+	defer zsIn.Close()
+	defer zsInW.Close()
+	zsOutR, zsOut, err := os.Pipe()
+	if err != nil {
+		return fail(api.ErrCompress, "%v", err)
+	}
+	defer zsOutR.Close()
+	defer zsOut.Close()
+	growPipe(zsInW)
+	growPipe(zsOut)
+
 	// runCtx stops both processes when either side of the pipeline fails.
 	runCtx, stopRun := context.WithCancelCause(ctx)
 	defer stopRun(nil)
 
-	args := append([]string{"sh", "-c", r.containerScript(), pidPath}, r.xtrabackupArgs()...)
+	args := append([]string{"sh", "-c", r.containerScript(), pidPath, fifoPath}, r.xtrabackupArgs()...)
 	xb := r.e.Podman.Exec(runCtx, container, args...)
 	xb.Stderr = r.scan
-	xbOut, err := xb.StdoutPipe()
-	if err != nil {
-		return fail(api.ErrXtrabackup, "%v", err)
-	}
 
 	hash := sha256.New()
 	var raw, compressed atomic.Int64
 	zs := r.zstdCommand(runCtx)
-	zs.Stdout = io.MultiWriter(out, hash, counter{&compressed})
+	zs.Stdin, zs.Stdout = zsIn, zsOut
 	var zsErr limitedBuffer
 	zs.Stderr = &zsErr
-	zsIn, err := zs.StdinPipe()
-	if err != nil {
-		return fail(api.ErrCompress, "%v", err)
-	}
 
 	if err := zs.Start(); err != nil {
 		return fail(api.ErrCompress, "start zstd: %v", err)
 	}
+	_ = zsIn.Close()
+	_ = zsOut.Close()
+	outDone := make(chan error, 1)
+	go func() {
+		err := drain(io.MultiWriter(out, hash, counter{&compressed}), zsOutR)
+		if err != nil {
+			// Stop zstd and xtrabackup instead of letting them block.
+			stopRun(fail(api.ErrCompress, "write data file: %v", err))
+		}
+		outDone <- err
+	}()
+
 	if err := xb.Start(); err != nil {
-		_ = zsIn.Close()
+		_ = zsInW.Close()
 		_ = zs.Wait()
+		<-outDone
 		return fail(api.ErrXtrabackup, "start xtrabackup: %v", err)
 	}
 	r.started = true
@@ -359,17 +407,28 @@ func (r *run) backup(ctx context.Context) error {
 
 	stopProgress := r.reportProgress(&raw, &compressed)
 
-	_, copyErr := io.Copy(zsIn, io.TeeReader(xbOut, counter{&raw}))
-	if copyErr != nil {
-		// zstd stopped reading; stop xtrabackup instead of letting it block.
-		stopRun(fail(api.ErrCompress, "write to zstd: %v", copyErr))
-	}
-	_ = zsIn.Close()
+	relayDone := make(chan struct{})
+	go func() {
+		defer close(relayDone)
+		if err := relay(zsInW, stream, &raw); err != nil {
+			// zstd stopped reading; stop xtrabackup instead of letting it block.
+			stopRun(fail(api.ErrCompress, "write to zstd: %v", err))
+		}
+		// Writers still blocked on the FIFO now fail with EPIPE.
+		_ = stream.Close()
+		_ = zsInW.Close()
+	}()
+
+	xbWaitErr := xb.Wait()
+	_ = hold.Close()
+	<-relayDone
 	zstdWaitErr := zs.Wait()
 	if zstdWaitErr != nil {
 		stopRun(fail(api.ErrCompress, "zstd: %v: %s", zstdWaitErr, zsErr.String()))
 	}
-	xbWaitErr := xb.Wait()
+	if err := <-outDone; err != nil && zstdWaitErr == nil {
+		zstdWaitErr = err
+	}
 	stopKill()
 	stopProgress()
 	_ = r.scan.Close()
@@ -553,7 +612,7 @@ func classify(err error) (api.JobStatus, api.ErrorCode, string) {
 // and metadata for diagnosis.
 func RemoveIncomplete(jobDir string) error {
 	var errs []error
-	for _, name := range []string{DataFile, CheckpointsFile, InfoFile, SlaveInfoFile, pidFile} {
+	for _, name := range []string{DataFile, CheckpointsFile, InfoFile, SlaveInfoFile, pidFile, fifoFile} {
 		if err := os.Remove(filepath.Join(jobDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
