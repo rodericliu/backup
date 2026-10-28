@@ -111,10 +111,10 @@ type Request struct {
 
 // Progress is a sample of a running backup (PRD E-6).
 type Progress struct {
-	RawBytes        int64         `json:"raw_bytes"`
-	CompressedBytes int64         `json:"compressed_bytes"`
-	BytesPerSecond  float64       `json:"bytes_per_second"`
-	Elapsed         time.Duration `json:"elapsed,format:nano"`
+	RawBytes        int64        `json:"raw_bytes"`
+	CompressedBytes int64        `json:"compressed_bytes"`
+	BytesPerSecond  float64      `json:"bytes_per_second"`
+	Elapsed         api.Duration `json:"elapsed"`
 }
 
 // failure is a classified job failure.
@@ -523,7 +523,7 @@ func (r *run) reportProgress(raw, compressed *atomic.Int64) (stop func()) {
 					RawBytes:        n,
 					CompressedBytes: compressed.Load(),
 					BytesPerSecond:  rate,
-					Elapsed:         now.Sub(start),
+					Elapsed:         api.Duration(now.Sub(start).Round(time.Millisecond)),
 				})
 			}
 		}

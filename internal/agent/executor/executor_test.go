@@ -100,7 +100,19 @@ func TestFullSuccess(t *testing.T) {
 	e := setup(t)
 	req := e.request(api.JobFull, "00-full")
 	var samples int
-	req.Progress = func(p Progress) { samples++ }
+	req.Progress = func(p Progress) {
+		samples++
+		// Samples are stored as JSON event payloads.
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Errorf("encode progress: %v", err)
+			return
+		}
+		var back Progress
+		if err := json.Unmarshal(b, &back); err != nil || back != p {
+			t.Errorf("progress round trip: %s -> %+v, %v", b, back, err)
+		}
+	}
 	t.Setenv("FAKE_XB", "slow")
 	e.exec.Run(t.Context(), req)
 
