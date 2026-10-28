@@ -111,7 +111,7 @@ type Progress struct {
 	RawBytes        int64         `json:"raw_bytes"`
 	CompressedBytes int64         `json:"compressed_bytes"`
 	BytesPerSecond  float64       `json:"bytes_per_second"`
-	Elapsed         time.Duration `json:"elapsed"`
+	Elapsed         time.Duration `json:"elapsed,format:nano"`
 }
 
 // failure is a classified job failure.
