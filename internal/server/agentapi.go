@@ -1,10 +1,12 @@
 package server
 
 import (
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"uuid"
 
 	"github.com/rodericliu/backup/internal/api"
@@ -98,6 +100,7 @@ func (s *Server) jobEvents(w http.ResponseWriter, r *http.Request) error {
 	if err := s.store.AddJobEvents(r.Context(), currentHost(r).ID, id, req.Events); err != nil {
 		return err
 	}
+	s.publishJob(r, id, lastProgress(req.Events))
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -136,7 +139,22 @@ func (s *Server) putJob(w http.ResponseWriter, r *http.Request) error {
 	if err := s.upsertJob(r, &j); err != nil {
 		return err
 	}
+	s.publishJob(r, id, nil)
 	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// lastProgress returns the newest progress sample in events, if any.
+func lastProgress(events []api.JobEvent) *api.Progress {
+	for _, event := range slices.Backward(events) {
+		if event.Type != api.EventProgress {
+			continue
+		}
+		var p api.Progress
+		if err := json.Unmarshal(event.Payload, &p); err == nil {
+			return &p
+		}
+	}
 	return nil
 }
 
