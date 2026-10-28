@@ -53,3 +53,10 @@ pre.code {
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 16px;
 }
+a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
