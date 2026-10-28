@@ -3,22 +3,32 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rodericliu/backup/internal/crypto"
+	"github.com/rodericliu/backup/internal/logging"
+	"github.com/rodericliu/backup/internal/server"
+	"github.com/rodericliu/backup/internal/server/config"
+	"github.com/rodericliu/backup/internal/store"
 	"github.com/rodericliu/backup/internal/version"
 )
 
 const usage = `usage: backup-server <command> [flags]
 
 commands:
+  run           run the server
+  check         validate the configuration
   cert init     create a self-signed CA
   cert issue    issue a server certificate signed by the CA
   keygen        create the master key that encrypts MySQL credentials
@@ -45,6 +55,10 @@ func run(args []string, stdout io.Writer) error {
 	}
 	cmd, args := args[0], args[1:]
 	switch cmd {
+	case "run":
+		return runServer(args)
+	case "check":
+		return check(args, stdout)
 	case "cert":
 		return cert(args, stdout)
 	case "keygen":
@@ -126,4 +140,81 @@ func keygen(args []string, stdout io.Writer) error {
 	}
 	_, err := fmt.Fprintf(stdout, "created %s; back it up: encrypted MySQL passwords cannot be recovered without it\n", *out)
 	return err
+}
+
+func configFlag(name string, args []string) (string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	path := fs.String("config", config.DefaultPath, "configuration file")
+	err := fs.Parse(args)
+	return *path, err
+}
+
+func check(args []string, stdout io.Writer) error {
+	path, err := configFlag("check", args)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	if _, err := server.LoadTLS(cfg.TLS.Cert, cfg.TLS.Key); err != nil {
+		return err
+	}
+	if _, err := crypto.LoadKeyFile(cfg.Secrets.MasterKeyFile); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "configuration %s is valid\n", path)
+	return err
+}
+
+func runServer(args []string) error {
+	path, err := configFlag("run", args)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	log, closer, err := logging.New(cfg.Log.Level, cfg.Log.Dir, "backup-server")
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+	if err := serve(cfg, log); err != nil {
+		log.Error("backup-server failed", "err", err)
+		return err
+	}
+	log.Info("backup-server stopped")
+	return nil
+}
+
+func serve(cfg *config.Config, log *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	tlsCfg, err := server.LoadTLS(cfg.TLS.Cert, cfg.TLS.Key)
+	if err != nil {
+		return err
+	}
+	key, err := crypto.LoadKeyFile(cfg.Secrets.MasterKeyFile)
+	if err != nil {
+		return err
+	}
+	sealer, err := crypto.NewSealer(key)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(ctx, cfg.Database.DSN(), cfg.Database.MaxConns)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		return err
+	}
+	srv := server.New(server.Options{Store: st, Sealer: sealer, Config: cfg, Logger: log})
+	log.Info("backup-server started", "version", version.Version, "listen", cfg.Listen, "agent_listen", cfg.AgentListen)
+	return srv.Run(ctx, tlsCfg)
 }

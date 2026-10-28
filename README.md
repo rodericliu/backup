@@ -41,6 +41,30 @@ systemctl enable --now backup-agent
     01-incr/  ...
 ```
 
+## backup-server
+
+中心 Web 平台（P2 进行中）。需要一个由你创建的 PostgreSQL 库和账号，表结构在启动时自动迁移。
+
+```bash
+make build                                         # bin/backup-server
+install -m 755 bin/backup-server /usr/local/bin/
+useradd --system --no-create-home backup-server
+install -d -m 750 -o root -g backup-server /etc/backup-server
+backup-server cert init                            # /etc/backup-server/ca/ca.crt、ca.key（自签 CA）
+backup-server cert issue -host backup-server.internal -host 10.20.0.10   # /etc/backup-server/tls/
+backup-server keygen                               # /etc/backup-server/master.key，加密 MySQL 密码，务必备份
+install -m 640 -g backup-server deploy/server.yaml.example /etc/backup-server/server.yaml   # 编辑数据库等
+chown backup-server: /etc/backup-server/master.key /etc/backup-server/tls/server.key   # 保持 0600
+backup-server check                                # 校验配置、证书与主密钥
+install -m 644 deploy/backup-server.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now backup-server
+```
+
+- `listen` 提供 Web UI 与管理 API，`agent_listen` 提供 Agent API（可以只对备份服务器开放）；留空则共用 `listen`
+- `GET /healthz` 在两个端口上都可用，数据库不可用时返回 503
+- `ca.crt` 分发给每个 agent（`server_ca`），`ca.key` 不要离开 CA 目录
+- 数据库密码也可以通过环境变量 `BACKUP_DB_PASSWORD` 提供
+
 ## 开发
 
 需要 Go 1.27+ 和 zstd（测试中假的 podman 直接在本机执行容器内命令）。
