@@ -53,7 +53,9 @@ container)
   *) cat "$dir/inspect.json" ;;
   esac ;;
 exec)
-  shift 2
+  shift
+  [ "$1" = --user ] && shift 2
+  shift
   case "$1" in
   fail) echo "boom" >&2; exit 3 ;;
   sleep) exec sleep 30 ;;
@@ -116,6 +118,12 @@ func TestOutput(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(out)); got != "echo hello" {
 		t.Errorf("output = %q", got)
+	}
+
+	c.User = "root"
+	out, err = c.Output(t.Context(), "gays_maindb_slave", "echo", "as-root")
+	if err != nil || strings.TrimSpace(string(out)) != "echo as-root" {
+		t.Errorf("with user: out=%q err=%v", out, err)
 	}
 
 	_, err = c.Output(t.Context(), "gays_maindb_slave", "fail")

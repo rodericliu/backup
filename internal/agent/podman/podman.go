@@ -26,6 +26,8 @@ const waitDelay = 30 * time.Second
 type Client struct {
 	// Bin is the podman binary.
 	Bin string
+	// User, if set, is passed to `podman exec --user`.
+	User string
 }
 
 // New returns a client using the given podman binary.
@@ -147,7 +149,11 @@ func (c *Client) inspect(ctx context.Context, names ...string) ([]Container, err
 // podman client receives SIGTERM; callers that must stop the process inside
 // the container should also kill it there.
 func (c *Client) Exec(ctx context.Context, container string, args ...string) *exec.Cmd {
-	return c.command(ctx, append([]string{"exec", container}, args...)...)
+	pre := []string{"exec"}
+	if c.User != "" {
+		pre = append(pre, "--user", c.User)
+	}
+	return c.command(ctx, append(append(pre, container), args...)...)
 }
 
 // Output runs args inside container and returns its stdout.
