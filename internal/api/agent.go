@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"encoding/json/jsontext"
+	"time"
+)
 
 // AgentAPIVersion is the version of the agent API (/api/agent/v1). The agent
 // sends it in HeaderAPIVersion; the server rejects other versions with 409
@@ -109,3 +112,49 @@ type HeartbeatResponse struct {
 
 // HeartbeatInterval is how often agents send heartbeats.
 const HeartbeatInterval = 15 * time.Second
+
+// AgentConfig is the configuration of one host returned by GET /config
+// (PRD 5.3.4). Projects carry their decrypted MySQL passwords.
+type AgentConfig struct {
+	Version int64 `json:"version"`
+	// Paused stops scheduling on the host; manual jobs still run (PRD S-9).
+	Paused   bool            `json:"paused"`
+	Projects []ProjectConfig `json:"projects"`
+}
+
+// Job event types recorded in a job's timeline (PRD J-7).
+const (
+	EventStatus   = "status"
+	EventProgress = "progress"
+	EventCleanup  = "cleanup"
+	EventMessage  = "message"
+)
+
+// JobEvent is one entry of a job's timeline. Seq is the agent's sequence
+// number, unique per host, so replayed events are ignored.
+type JobEvent struct {
+	Seq     int64          `json:"seq"`
+	At      time.Time      `json:"at"`
+	Type    string         `json:"type"`
+	Payload jsontext.Value `json:"payload"`
+}
+
+// JobEvents is the body of POST /jobs/{id}/events. Job, when set, is the
+// job's current state; it creates the job on the server as soon as it is
+// queued and never overrides a reported final result.
+type JobEvents struct {
+	Job    *Job       `json:"job,omitzero"`
+	Events []JobEvent `json:"events"`
+}
+
+// CleanupEvent is the payload of an EventCleanup event, recorded on the full
+// job of a chain removed by retention (PRD R-3).
+type CleanupEvent struct {
+	ChainID string    `json:"chain_id"`
+	Dir     string    `json:"dir"`
+	LastAt  time.Time `json:"last_at"`
+	Reason  string    `json:"reason"`
+}
+
+// MaxLogSize bounds an uploaded job log (POST /jobs/{id}/log).
+const MaxLogSize = 64 << 20

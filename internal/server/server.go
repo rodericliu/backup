@@ -113,6 +113,10 @@ func (s *Server) routes() {
 
 	s.agentAPI("POST /register", s.register)
 	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))
+	s.agentAPI("GET /config", s.requireAgent(s.agentConfig))
+	s.agentAPI("POST /jobs/{id}/events", s.requireAgent(s.jobEvents))
+	s.agentAPI("PUT /jobs/{id}", s.requireAgent(s.putJob))
+	s.agentAPI("POST /jobs/{id}/log", s.requireAgent(s.uploadJobLog))
 
 	s.tasks = append(s.tasks, task{"delete expired sessions", s.deleteExpiredSessions})
 }
