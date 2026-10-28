@@ -91,6 +91,8 @@ func (s *Server) routes() {
 	s.webAPI("PATCH /users/{id}", s.updateUser)
 	s.webAPI("POST /users/{id}/password", s.resetPassword)
 
+	s.webAPI("GET /audit-logs", s.listAuditLogs)
+
 	s.tasks = append(s.tasks, task{"delete expired sessions", s.deleteExpiredSessions})
 }
 
