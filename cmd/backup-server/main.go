@@ -215,6 +215,9 @@ func serve(cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	srv := server.New(server.Options{Store: st, Sealer: sealer, Config: cfg, Logger: log})
+	if err := srv.Bootstrap(ctx); err != nil {
+		return err
+	}
 	log.Info("backup-server started", "version", version.Version, "listen", cfg.Listen, "agent_listen", cfg.AgentListen)
 	return srv.Run(ctx, tlsCfg)
 }
