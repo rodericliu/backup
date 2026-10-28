@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,6 +62,7 @@ type LogConfig struct {
 // Default returns the configuration used for omitted fields.
 func Default() Config {
 	return Config{
+		ServerCA:          "/etc/backup-agent/tls/ca.crt",
 		RegisterTokenFile: "/etc/backup-agent/register.token",
 		StateDir:          "/var/lib/backup-agent",
 		BackupRoot:        "/data/backup",
@@ -157,6 +159,16 @@ func (c *Config) validate() error {
 	} {
 		if !filepath.IsAbs(path) {
 			add("%s %q: must be an absolute path", name, path)
+		}
+	}
+	if c.ServerURL != "" {
+		if u, err := url.Parse(c.ServerURL); err != nil || u.Scheme != "https" || u.Host == "" {
+			add("server_url %q: want https://host:port", c.ServerURL)
+		}
+		for name, path := range map[string]string{"server_ca": c.ServerCA, "register_token_file": c.RegisterTokenFile} {
+			if !filepath.IsAbs(path) {
+				add("%s %q: must be an absolute path when server_url is set", name, path)
+			}
 		}
 	}
 	if c.Log.Dir != "" && !filepath.IsAbs(c.Log.Dir) {

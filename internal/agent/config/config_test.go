@@ -145,3 +145,21 @@ func TestLoad(t *testing.T) {
 		t.Error("missing file: want error")
 	}
 }
+
+func TestServerURL(t *testing.T) {
+	cfg, err := Parse([]byte(`server_url: "https://backup-server.internal:9443"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServerCA != "/etc/backup-agent/tls/ca.crt" {
+		t.Errorf("server_ca = %q", cfg.ServerCA)
+	}
+	for _, doc := range []string{
+		`server_url: "http://backup-server.internal:9443"`,
+		`{server_url: "https://backup-server.internal:9443", server_ca: ca.crt}`,
+	} {
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: want error", doc)
+		}
+	}
+}

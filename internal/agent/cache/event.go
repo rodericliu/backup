@@ -7,14 +7,16 @@ import (
 	"strconv"
 	"time"
 	"uuid"
+
+	"github.com/rodericliu/backup/internal/api"
 )
 
 // Event types recorded in a job's timeline (PRD J-7).
 const (
-	EventStatus   = "status"
-	EventProgress = "progress"
-	EventCleanup  = "cleanup"
-	EventMessage  = "message"
+	EventStatus   = api.EventStatus
+	EventProgress = api.EventProgress
+	EventCleanup  = api.EventCleanup
+	EventMessage  = api.EventMessage
 )
 
 // Event is one entry of a job's timeline.

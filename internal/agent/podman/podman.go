@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/rodericliu/backup/internal/api"
 )
 
 // ErrNotFound is returned when a container does not exist.
@@ -33,22 +35,11 @@ type Client struct {
 // New returns a client using the given podman binary.
 func New(bin string) *Client { return &Client{Bin: bin} }
 
-// Mount is a bind mount of a container.
-type Mount struct {
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-}
+// Mount is a bind mount or volume of a container.
+type Mount = api.Mount
 
 // Container describes a container as reported to the server (PRD H-6).
-type Container struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	State   string   `json:"state"`
-	Running bool     `json:"running"`
-	Ports   []string `json:"ports"`
-	Mounts  []Mount  `json:"mounts"`
-}
+type Container = api.Container
 
 // inspect is the subset of `podman container inspect` output we use.
 type inspect struct {

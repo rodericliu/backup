@@ -251,3 +251,25 @@ func TestPurge(t *testing.T) {
 		t.Errorf("purge audit logs = %d", logs.Total)
 	}
 }
+
+func TestUndeliverableCommandFails(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.admin()
+	token, hostID := e.setupHost(admin)
+	now := e.clock.Now()
+	bad := &store.Command{HostID: hostID, Type: api.CmdTestConnection, Payload: []byte(`{"project":{},"secret_enc":"bm90LXNlYWxlZA=="}`),
+		CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
+	if err := e.store.CreateCommand(t.Context(), bad); err != nil {
+		t.Fatal(err)
+	}
+	var c store.Command
+	do(t, admin, "POST", e.api("/hosts/"+itoa(hostID)+"/rescan"), nil, &c)
+	cmds := e.poll(token, "0s")
+	if len(cmds) != 1 || cmds[0].ID != c.ID {
+		t.Errorf("delivered = %+v", cmds)
+	}
+	got, err := e.store.Command(t.Context(), bad.ID)
+	if err != nil || got.Status != store.CommandFailed || !strings.Contains(string(got.Result), "could not deliver") {
+		t.Errorf("undeliverable command = %+v %v", got, err)
+	}
+}

@@ -44,6 +44,9 @@ type Options struct {
 	CleanInterval time.Duration
 	// Now returns the current time; default time.Now.
 	Now func() time.Time
+	// OnChange, if set, is called after a job's state or progress changed.
+	// It must not block.
+	OnChange func()
 }
 
 // Worker owns the host's job queue and its single execution slot.
@@ -51,6 +54,7 @@ type Worker struct {
 	opts     Options
 	log      *slog.Logger
 	projects atomic.Pointer[[]api.ProjectConfig]
+	paused   atomic.Bool
 	wake     chan struct{}
 
 	// addMu serializes changes to the queue that are also saved (add and
@@ -107,6 +111,16 @@ func New(opts Options) *Worker {
 func (w *Worker) SetProjects(projects []api.ProjectConfig) {
 	ps := slices.Clone(projects)
 	w.projects.Store(&ps)
+	w.signal()
+}
+
+// SetPaused pauses or resumes scheduling (PRD S-9). While paused, planned
+// slots are not queued and are not caught up later; manual jobs and jobs
+// already queued still run.
+func (w *Worker) SetPaused(paused bool) {
+	if w.paused.Swap(paused) != paused {
+		w.log.Info("scheduling paused state changed", "paused", paused)
+	}
 	w.signal()
 }
 
@@ -168,6 +182,10 @@ func (w *Worker) runOnce(ctx context.Context) bool {
 // while the agent was down are never backfilled (PRD S-8).
 func (w *Worker) schedule(ctx context.Context, now time.Time) {
 	if !now.After(w.lastSchedule) {
+		return
+	}
+	if w.paused.Load() {
+		w.lastSchedule = now
 		return
 	}
 	for _, s := range schedule.Slots(*w.projects.Load(), w.opts.Location, w.lastSchedule, now) {
@@ -280,13 +298,14 @@ type Snapshot struct {
 	Current  *api.Job
 	Progress executor.Progress
 	Queue    []api.Job
+	Paused   bool
 }
 
 // Status returns a copy of the current job and queue.
 func (w *Worker) Status() Snapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	var s Snapshot
+	s := Snapshot{Paused: w.paused.Load()}
 	if w.current != nil {
 		j := w.current.job
 		s.Current, s.Progress = &j, w.current.progress
@@ -339,6 +358,7 @@ func (w *Worker) execute(ctx context.Context, job *api.Job) {
 		if err := w.opts.DB.AddEvent(context.WithoutCancel(ctx), job.ID, cache.EventProgress, pr); err != nil {
 			w.log.Warn("record progress", "job", job.ID.String(), "err", err)
 		}
+		w.changed()
 	}
 	w.opts.Runner.Run(jobCtx, req)
 
@@ -521,6 +541,13 @@ func (w *Worker) save(ctx context.Context, job *api.Job) {
 	}
 	if err := w.opts.DB.AddEvent(ctx, job.ID, cache.EventStatus, ev); err != nil {
 		w.log.Error("record status event", "job", job.ID.String(), "err", err)
+	}
+	w.changed()
+}
+
+func (w *Worker) changed() {
+	if w.opts.OnChange != nil {
+		w.opts.OnChange()
 	}
 }
 

@@ -169,20 +169,26 @@ func TestCleanRefusesOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestDeleteAll(t *testing.T) {
+func TestPurge(t *testing.T) {
 	e := setup(t)
-	a := e.chain("gays", cache.ChainActive, time.Hour)
-	b := e.chain("gays", cache.ChainRunning, 0)
-	if err := e.clean.DeleteAll(t.Context(), "gays"); err != nil {
-		t.Fatal(err)
+	a := e.chain("gays", cache.ChainActive, 2*time.Hour)
+	b := e.chain("gays", cache.ChainRunning, time.Hour)
+	// A chain of a new project with the same name, started after the deletion.
+	c := e.chain("gays", cache.ChainActive, 0)
+	n, err := e.clean.Purge(t.Context(), "gays", c.StartedAt)
+	if err != nil || n != 2 {
+		t.Fatalf("purge = %d, %v", n, err)
 	}
-	for _, c := range []*cache.Chain{a, b} {
-		if _, err := os.Stat(c.Dir); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s still exists", c.Dir)
+	for _, ch := range []*cache.Chain{a, b} {
+		if _, err := os.Stat(ch.Dir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s still exists", ch.Dir)
 		}
 	}
-	if chains, _ := e.db.Chains(t.Context(), "gays"); len(chains) != 0 {
-		t.Errorf("chains left: %d", len(chains))
+	if _, err := os.Stat(c.Dir); err != nil {
+		t.Errorf("chain of the new project deleted: %v", err)
+	}
+	if chains, _ := e.db.Chains(t.Context(), "gays"); len(chains) != 1 || chains[0].ID != c.ID {
+		t.Errorf("chains left: %+v", chains)
 	}
 }
 

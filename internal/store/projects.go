@@ -114,7 +114,9 @@ func bumpConfig(ctx context.Context, tx pgx.Tx, hostID int64) (int64, error) {
 type Sealer func(projectID int64) []byte
 
 // CreateProject inserts a project, encrypting its password with seal, and
-// bumps the host's configuration version. It sets p.ID and the metadata.
+// bumps the host's configuration version. Jobs and chains of the host that
+// were reported under the project's name before it existed are attached to
+// it. It sets p.ID and the metadata.
 func (s *Store) CreateProject(ctx context.Context, p *Project, seal Sealer) error {
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, "SELECT nextval('projects_id_seq')").Scan(&p.ID); err != nil {
@@ -140,6 +142,14 @@ func (s *Store) CreateProject(ctx context.Context, p *Project, seal Sealer) erro
 			return err
 		}
 		*p = *created
+		// Jobs and chains the agent reported before the project existed, for
+		// example history replayed when a standalone agent first connects.
+		for _, table := range []string{"jobs", "chains"} {
+			if _, err := tx.Exec(ctx, "UPDATE "+table+" SET project_id = $1 WHERE host_id = $2 AND project = $3 AND project_id IS NULL",
+				p.ID, p.HostID, p.Name); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

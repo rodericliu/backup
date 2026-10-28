@@ -8,7 +8,7 @@ MySQL 从库备份平台：`backup-server`（中心 Web 平台）与 `backup-age
 
 在每台备份服务器上，对 podman 容器中的 Percona Server 从库执行 xtrabackup 流式全量 / 增量备份，在容器内经 zstd 压缩后写入备份目录。同一台主机同一时刻只运行一个备份任务。
 
-当前（P1）可以只靠本地配置独立运行；接入 backup-server 在 P2 实现。
+可以只靠本地配置独立运行（`server_url` 留空），也可以接入 backup-server，由 server 下发项目配置。
 
 ### 前置条件
 
@@ -32,6 +32,18 @@ systemctl enable --now backup-agent
 - 修改项目配置后执行 `systemctl reload backup-agent`（SIGHUP）即可生效；其他配置项需要重启。
 - 日志：`/var/log/backup-agent/backup-agent-YYYY-MM-DD.log`（JSON，按天轮转，保留 30 天）。
 - 本地状态：`/var/lib/backup-agent/cache.db`（SQLite）。
+
+### 接入 backup-server
+
+1. 在 Web 上生成注册 token，写入 `/etc/backup-agent/register.token`（0600）
+2. 把 server 的 `ca.crt` 拷贝到 `/etc/backup-agent/tls/ca.crt`
+3. 在 `agent.yaml` 中设置 `server_url: https://<server>:<agent_listen 端口>`，`systemctl restart backup-agent`
+4. agent 注册后主机出现在 Web 上；在 Web 上添加项目，agent 在下一次心跳（≤15s）拉取配置
+
+- 配置了 `server_url` 后，`agent.yaml` 中的 `projects` 被忽略；server 下发的配置缓存在本地 SQLite，server 不可用时按缓存继续备份，恢复后按顺序补传任务结果和事件
+- 首次接入、尚未拉取到任何配置时 agent 不执行备份；从独立运行切换时，从重启到在 Web 上建好项目之间没有备份，建议在两次全量之间操作
+- **项目名必须与独立运行时一致**：本地的备份链按项目名延续，增量基准和保留清理不受影响；接入前的历史任务会补传，并在建立同名项目时自动关联
+- 主机被吊销后，在 Web 上生成新的注册 token 写入 `register.token`，agent 会自动重新注册（沿用原主机记录），无需重启
 
 ### 备份目录
 
