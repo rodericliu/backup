@@ -88,7 +88,7 @@ func (s *Server) hostSchedule(w http.ResponseWriter, r *http.Request) error {
 	// Slots are planned in (from, to]; start just before from to include it.
 	runs := schedule.Predict(configs, s.cfg.Location, from.Add(-time.Nanosecond), to.Add(-time.Nanosecond), est)
 	resp := ScheduleResponse{
-		HostID: hostID, From: from, To: to, Timezone: s.cfg.Location.String(),
+		HostID: hostID, From: from, To: to, Timezone: zoneName(s.cfg.Location, from),
 		Runs: make([]PredictedRun, len(runs)), Hours: []HourLoad{},
 	}
 	for i, run := range runs {
@@ -104,6 +104,16 @@ func (s *Server) hostSchedule(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, http.StatusOK, resp)
+}
+
+// zoneName names a location with its UTC offset at t, for example
+// "Asia/Shanghai (UTC+08:00)"; "Local" is shown by its abbreviation.
+func zoneName(loc *time.Location, t time.Time) string {
+	name := loc.String()
+	if name == "Local" {
+		name, _ = t.In(loc).Zone()
+	}
+	return name + " (UTC" + t.In(loc).Format("-07:00") + ")"
 }
 
 // diskAlertRatio flags disks above 90% usage (PRD D-4).
