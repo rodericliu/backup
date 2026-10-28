@@ -14,7 +14,7 @@ podman: podman
 low_io_priority: true            # ionice -c3 / nice -n 19 for xtrabackup and zstd
 bitmap_alert_size: 10737418240   # warn when changed page bitmaps exceed 10 GiB
 
-zstd:
+zstd:                            # runs inside each container; zstd must be installed there
   threads: 8
   level: 3
 

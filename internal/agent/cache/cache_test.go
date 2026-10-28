@@ -176,7 +176,7 @@ func TestUnreported(t *testing.T) {
 	rev := un[0].Rev
 
 	// A local update after reading must not be lost by the acknowledgement.
-	done.SHA256 = "abc"
+	done.LogTail = "abc"
 	if err := db.SaveJob(ctx, done); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestUnreported(t *testing.T) {
 		t.Fatal(err)
 	}
 	un, err = db.UnreportedJobs(ctx, 10)
-	if err != nil || len(un) != 1 || un[0].Job.SHA256 != "abc" {
+	if err != nil || len(un) != 1 || un[0].Job.LogTail != "abc" {
 		t.Fatalf("after stale ack = %+v, %v", un, err)
 	}
 	if err := db.MarkReported(ctx, done.ID, un[0].Rev); err != nil {

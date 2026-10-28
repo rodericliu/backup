@@ -3,8 +3,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	json "encoding/json/v2"
 	"log/slog"
 	"os"
@@ -129,8 +127,8 @@ func TestFullSuccess(t *testing.T) {
 	if job.UsedBitmap {
 		t.Error("full backup marked as using bitmap")
 	}
-	if job.RawSize != 20*16384 {
-		t.Errorf("raw size = %d, want %d", job.RawSize, 20*16384)
+	if job.RawSize != 0 {
+		t.Errorf("raw size = %d, want 0 (not measured)", job.RawSize)
 	}
 	if samples == 0 {
 		t.Error("no progress samples")
@@ -140,15 +138,11 @@ func TestFullSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(data)) != job.CompressedSize || job.CompressedSize >= job.RawSize {
-		t.Errorf("compressed size = %d, file %d, raw %d", job.CompressedSize, len(data), job.RawSize)
-	}
-	sum := sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != job.SHA256 {
-		t.Error("sha256 does not match file")
+	if int64(len(data)) != job.CompressedSize || job.CompressedSize == 0 {
+		t.Errorf("compressed size = %d, file %d", job.CompressedSize, len(data))
 	}
 	raw, err := exec.Command("zstd", "-d", "-c", job.Path).Output()
-	if err != nil || int64(len(raw)) != job.RawSize || !bytes.Equal(raw[:4], []byte("xxxx")) {
+	if err != nil || len(raw) != 20*16384 || !bytes.Equal(raw[:4], []byte("xxxx")) {
 		t.Errorf("decompress: %d bytes, %v", len(raw), err)
 	}
 
@@ -160,16 +154,13 @@ func TestFullSuccess(t *testing.T) {
 	if exists(filepath.Join(req.JobDir, pidFile)) {
 		t.Error("pid file left behind")
 	}
-	if exists(filepath.Join(req.JobDir, fifoFile)) {
-		t.Error("fifo left behind")
-	}
 	if fi, _ := os.Stat(job.Path); fi.Mode().Perm() != 0o600 {
 		t.Errorf("data file mode %o", fi.Mode().Perm())
 	}
 	if si, _ := os.ReadFile(filepath.Join(req.JobDir, SlaveInfoFile)); !strings.Contains(string(si), "MASTER_LOG_POS=4711") {
 		t.Errorf("slave info file = %q", si)
 	}
-	if meta := readMeta(t, req.JobDir); meta.ID != job.ID || meta.SHA256 != job.SHA256 || meta.Status != api.StatusSuccess {
+	if meta := readMeta(t, req.JobDir); meta.ID != job.ID || meta.CompressedSize != job.CompressedSize || meta.Status != api.StatusSuccess {
 		t.Errorf("meta = %+v", meta)
 	}
 	if !strings.Contains(job.LogTail, "completed OK!") {
@@ -267,6 +258,15 @@ func TestFailures(t *testing.T) {
 		{name: "xtrabackup error", env: map[string]string{"FAKE_XB": "fail"}, code: api.ErrXtrabackup, started: true},
 		{name: "no completed ok", env: map[string]string{"FAKE_XB": "nook"}, code: api.ErrXtrabackup, started: true},
 		{name: "zstd missing", mutate: func(e *env, _ *Request) { e.exec.Opts.Zstd = "/nonexistent/zstd" }, code: api.ErrCompress},
+		{name: "zstd error", mutate: func(e *env, _ *Request) {
+			// Fails like zstd on a full disk while xtrabackup keeps writing.
+			path := filepath.Join(e.dir, "zstd-fail")
+			script := "#!/bin/sh\nhead -c 1 >/dev/null\necho 'zstd: error 70 : Write error : No space left on device' >&2\nexit 1\n"
+			if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+				e.t.Fatal(err)
+			}
+			e.exec.Opts.Zstd = path
+		}, code: api.ErrCompress, started: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

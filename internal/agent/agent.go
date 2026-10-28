@@ -39,10 +39,8 @@ type Agent struct {
 
 // New takes the host lock, opens the local cache and builds the worker.
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Agent, error) {
-	for _, bin := range []string{cfg.Podman, "zstd"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			return nil, fmt.Errorf("required binary %s: %w", bin, err)
-		}
+	if _, err := exec.LookPath(cfg.Podman); err != nil {
+		return nil, fmt.Errorf("required binary %s: %w", cfg.Podman, err)
 	}
 	unlock, err := worker.Lock(cfg.LockFile)
 	if err != nil {

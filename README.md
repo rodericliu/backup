@@ -6,14 +6,14 @@ MySQL 从库备份平台：`backup-server`（中心 Web 平台）与 `backup-age
 
 ## backup-agent
 
-在每台备份服务器上，对 podman 容器中的 Percona Server 从库执行 xtrabackup 流式全量 / 增量备份，经 zstd 压缩并计算 sha256。同一台主机同一时刻只运行一个备份任务。
+在每台备份服务器上，对 podman 容器中的 Percona Server 从库执行 xtrabackup 流式全量 / 增量备份，在容器内经 zstd 压缩后写入备份目录。同一台主机同一时刻只运行一个备份任务。
 
 当前（P1）可以只靠本地配置独立运行；接入 backup-server 在 P2 实现。
 
 ### 前置条件
 
-- Ubuntu 24.04，podman 4.x，宿主机安装 `zstd`（`apt install zstd`）
-- 每个从库容器内有 xtrabackup 2.4、mysql 客户端，并把宿主机的备份根目录（默认 `/data/backup`）挂载到容器内的**相同路径**
+- Ubuntu 24.04，podman 4.x
+- 每个从库容器内有 xtrabackup 2.4、mysql 客户端、`zstd`，并把宿主机的备份根目录（默认 `/data/backup`）挂载到容器内的**相同路径**
 - 每个从库都已创建备份账号（PRD §10.4）；需要增量的从库开启 `innodb_track_changed_pages = ON`（PRD §10.5）
 
 ### 安装
@@ -43,7 +43,7 @@ systemctl enable --now backup-agent
 
 ## 开发
 
-需要 Go 1.27+ 和 zstd。
+需要 Go 1.27+ 和 zstd（测试中假的 podman 直接在本机执行容器内命令）。
 
 ```bash
 make test    # go test -race ./...

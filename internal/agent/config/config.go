@@ -45,7 +45,7 @@ type Config struct {
 	Location *time.Location `yaml:"-"`
 }
 
-// ZstdConfig configures compression.
+// ZstdConfig configures compression, which runs inside the container.
 type ZstdConfig struct {
 	Threads int `yaml:"threads"`
 	Level   int `yaml:"level"`

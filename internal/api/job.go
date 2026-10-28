@@ -101,7 +101,6 @@ type Job struct {
 	ErrorMessage   string     `json:"error_message,omitzero"`
 	LogTail        string     `json:"log_tail,omitzero"`
 	Path           string     `json:"path,omitzero"`
-	SHA256         string     `json:"sha256,omitzero"`
 }
 
 // Duration returns how long the job ran, or zero if it has not finished.

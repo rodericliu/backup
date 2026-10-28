@@ -1,27 +1,22 @@
 // Package executor runs one xtrabackup job: prechecks, streaming backup with
-// zstd compression and sha256, result validation, metadata extraction and
-// cleanup (PRD 6.4).
+// zstd compression inside the container, result validation, metadata
+// extraction and cleanup (PRD 6.4).
 package executor
 
 import (
 	"bufio"
+	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"sync/atomic"
-	"syscall"
+	"strings"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/rodericliu/backup/internal/agent/mysql"
 	"github.com/rodericliu/backup/internal/agent/podman"
@@ -37,7 +32,6 @@ const (
 	LogFile         = "backup.log"
 	MetaFile        = "meta.json"
 	pidFile         = "xtrabackup.pid"
-	fifoFile        = "xtrabackup.fifo"
 )
 
 // CredentialsDir is the directory below the backup root that holds temporary
@@ -68,7 +62,7 @@ type Podman interface {
 // Options configures an Executor.
 type Options struct {
 	BackupRoot    string
-	Zstd          string // zstd binary; default "zstd"
+	Zstd          string // zstd binary inside the container; default "zstd"
 	ZstdThreads   int
 	ZstdLevel     int
 	LowIOPriority bool
@@ -109,9 +103,9 @@ type Request struct {
 	Progress func(Progress)
 }
 
-// Progress is a sample of a running backup (PRD E-6).
+// Progress is a sample of a running backup (PRD E-6). Compression runs inside
+// the container, so only the size of the data file is known.
 type Progress struct {
-	RawBytes        int64        `json:"raw_bytes"`
 	CompressedBytes int64        `json:"compressed_bytes"`
 	BytesPerSecond  float64      `json:"bytes_per_second"`
 	Elapsed         api.Duration `json:"elapsed"`
@@ -273,43 +267,48 @@ func (r *run) xtrabackupArgs() []string {
 	return args
 }
 
-// containerScript records the shell's PID, which becomes xtrabackup's PID
-// after exec, so that the process can be killed inside the container. Its
-// arguments are the PID file, the FIFO receiving the stream and xtrabackup's
-// arguments.
+// containerScript runs xtrabackup piped into zstd inside the container. Its
+// arguments are the PID file, the data file, the zstd binary and xtrabackup's
+// arguments. The inner shell records its PID, which becomes xtrabackup's PID
+// after exec, so that xtrabackup can be killed inside the container; zstd then
+// reads EOF and exits. The exit codes of both are printed to stdout as
+// "xtrabackup N" and "zstd N" (see exitCodes).
 func (r *run) containerScript() string {
-	prio := `exec xtrabackup "$@" > "$out"`
+	var b strings.Builder
+	b.WriteString(`pid=$0 out=$1 zstd=$2; shift 2; prio=; `)
 	if r.e.Opts.LowIOPriority {
-		prio = `if command -v ionice >/dev/null 2>&1; then exec ionice -c3 nice -n 19 xtrabackup "$@" > "$out"; fi; exec nice -n 19 xtrabackup "$@" > "$out"`
+		b.WriteString(`prio="nice -n 19"; command -v ionice >/dev/null 2>&1 && prio="ionice -c3 $prio"; `)
 	}
-	return `echo $$ > "$0"; out=$1; shift; ` + prio
+	b.WriteString(`command -v "$zstd" >/dev/null 2>&1 || { echo "$zstd: command not found" >&2; echo "zstd 127"; exit 0; }; `)
+	b.WriteString(`umask 077; exec 3>&1; `)
+	b.WriteString(`{ $prio sh -c 'echo $$ > "$0"; exec xtrabackup "$@"' "$pid" "$@" 3>&-; echo "xtrabackup $?" >&3; } | `)
+	fmt.Fprintf(&b, `$prio "$zstd" -q -c -T%d -%d > "$out" 3>&-; echo "zstd $?"`, r.e.Opts.ZstdThreads, r.e.Opts.ZstdLevel)
+	return b.String()
 }
 
-func (r *run) zstdCommand(ctx context.Context) *exec.Cmd {
-	bin := r.e.Opts.Zstd
-	if bin == "" {
-		bin = "zstd"
-	}
-	args := []string{"-q", "-c", "-T" + strconv.Itoa(r.e.Opts.ZstdThreads), "-" + strconv.Itoa(r.e.Opts.ZstdLevel)}
-	name := bin
-	if r.e.Opts.LowIOPriority {
-		args = append([]string{"-n", "19", bin}, args...)
-		name = "nice"
-		if _, err := exec.LookPath("ionice"); err == nil {
-			args = append([]string{"-c3", "nice"}, args...)
-			name = "ionice"
+// exitCodes parses the output of containerScript. A missing code is -1.
+func exitCodes(out string) (xtrabackup, zstd int) {
+	xtrabackup, zstd = -1, -1
+	for line := range strings.Lines(out) {
+		name, code, _ := strings.Cut(strings.TrimSpace(line), " ")
+		n, err := strconv.Atoi(code)
+		if err != nil {
+			continue
+		}
+		switch name {
+		case "xtrabackup":
+			xtrabackup = n
+		case "zstd":
+			zstd = n
 		}
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = 30 * time.Second
-	return cmd
+	return xtrabackup, zstd
 }
 
 func (r *run) backup(ctx context.Context) error {
 	dir := r.req.JobDir
-	container := r.req.Project.Container
 	pidPath := filepath.Join(dir, pidFile)
+	dataPath := filepath.Join(dir, DataFile)
 
 	logf, err := os.OpenFile(filepath.Join(dir, LogFile), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -321,149 +320,90 @@ func (r *run) backup(ctx context.Context) error {
 	r.scan = newLogScanner(logBuf)
 	defer r.scan.Close()
 
-	out, err := os.OpenFile(filepath.Join(dir, DataFile), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fail(api.ErrCompress, "create data file: %v", err)
+	// The shell in the container creates the data file under umask 077; a
+	// stale file would keep its old mode.
+	if err := os.Remove(dataPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fail(api.ErrCompress, "remove stale data file: %v", err)
 	}
-	defer out.Close()
 
-	// xtrabackup writes its stream into a FIFO in the job directory, which is
-	// mounted at the same path in the container, so the stream does not pass
-	// through conmon and the podman client. The read end is opened first
-	// without blocking; hold keeps a writer so that the read end only reports
-	// EOF once xtrabackup has exited, even if it never opened the FIFO.
-	fifoPath := filepath.Join(dir, fifoFile)
-	_ = os.Remove(fifoPath)
-	if err := unix.Mkfifo(fifoPath, 0o600); err != nil {
-		return fail(api.ErrCompress, "create fifo: %v", err)
-	}
-	defer os.Remove(fifoPath)
-	stream, err := openFIFOReader(fifoPath)
-	if err != nil {
-		return fail(api.ErrCompress, "open fifo: %v", err)
-	}
-	defer stream.Close()
-	hold, err := os.OpenFile(fifoPath, os.O_WRONLY, 0)
-	if err != nil {
-		return fail(api.ErrCompress, "open fifo: %v", err)
-	}
-	defer hold.Close()
-	growPipe(stream)
-
-	zsIn, zsInW, err := os.Pipe()
-	if err != nil {
-		return fail(api.ErrCompress, "%v", err)
-	}
-	defer zsIn.Close()
-	defer zsInW.Close()
-	zsOutR, zsOut, err := os.Pipe()
-	if err != nil {
-		return fail(api.ErrCompress, "%v", err)
-	}
-	defer zsOutR.Close()
-	defer zsOut.Close()
-	growPipe(zsInW)
-	growPipe(zsOut)
-
-	// runCtx stops both processes when either side of the pipeline fails.
-	runCtx, stopRun := context.WithCancelCause(ctx)
-	defer stopRun(nil)
-
-	args := append([]string{"sh", "-c", r.containerScript(), pidPath, fifoPath}, r.xtrabackupArgs()...)
-	xb := r.e.Podman.Exec(runCtx, container, args...)
+	zstd := cmp.Or(r.e.Opts.Zstd, "zstd")
+	args := append([]string{"sh", "-c", r.containerScript(), pidPath, dataPath, zstd}, r.xtrabackupArgs()...)
+	xb := r.e.Podman.Exec(ctx, r.req.Project.Container, args...)
 	xb.Stderr = r.scan
-
-	hash := sha256.New()
-	var raw, compressed atomic.Int64
-	zs := r.zstdCommand(runCtx)
-	zs.Stdin, zs.Stdout = zsIn, zsOut
-	var zsErr limitedBuffer
-	zs.Stderr = &zsErr
-
-	if err := zs.Start(); err != nil {
-		return fail(api.ErrCompress, "start zstd: %v", err)
-	}
-	_ = zsIn.Close()
-	_ = zsOut.Close()
-	outDone := make(chan error, 1)
-	go func() {
-		err := drain(io.MultiWriter(out, hash, counter{&compressed}), zsOutR)
-		if err != nil {
-			// Stop zstd and xtrabackup instead of letting them block.
-			stopRun(fail(api.ErrCompress, "write data file: %v", err))
-		}
-		outDone <- err
-	}()
+	var status limitedBuffer
+	xb.Stdout = &status
 
 	if err := xb.Start(); err != nil {
-		_ = zsInW.Close()
-		_ = zs.Wait()
-		<-outDone
 		return fail(api.ErrXtrabackup, "start xtrabackup: %v", err)
 	}
 	r.started = true
-	stopKill := context.AfterFunc(runCtx, func() { r.killInContainer(pidPath) })
+	stopKill := context.AfterFunc(ctx, func() { r.killInContainer(pidPath) })
 	defer stopKill()
+	stopProgress := r.reportProgress(dataPath)
 
-	stopProgress := r.reportProgress(&raw, &compressed)
-
-	relayDone := make(chan struct{})
-	go func() {
-		defer close(relayDone)
-		if err := relay(zsInW, stream, &raw); err != nil {
-			// zstd stopped reading; stop xtrabackup instead of letting it block.
-			stopRun(fail(api.ErrCompress, "write to zstd: %v", err))
-		}
-		// Writers still blocked on the FIFO now fail with EPIPE.
-		_ = stream.Close()
-		_ = zsInW.Close()
-	}()
-
-	xbWaitErr := xb.Wait()
-	_ = hold.Close()
-	<-relayDone
-	zstdWaitErr := zs.Wait()
-	if zstdWaitErr != nil {
-		stopRun(fail(api.ErrCompress, "zstd: %v: %s", zstdWaitErr, zsErr.String()))
-	}
-	if err := <-outDone; err != nil && zstdWaitErr == nil {
-		zstdWaitErr = err
-	}
+	waitErr := xb.Wait()
 	stopKill()
 	stopProgress()
 	_ = r.scan.Close()
-
-	job := r.req.Job
-	job.RawSize = raw.Load()
-	job.CompressedSize = compressed.Load()
-	job.SHA256 = hex.EncodeToString(hash.Sum(nil))
-	job.LogTail = r.scan.Tail(LogTailLines)
-	if err := out.Sync(); err != nil && zstdWaitErr == nil {
-		zstdWaitErr = err
-	}
 	_ = os.Remove(pidPath)
 
+	job := r.req.Job
+	job.LogTail = r.scan.Tail(LogTailLines)
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}
-	if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
-		return cause
+
+	xbCode, zstdCode := exitCodes(status.String())
+	// A failing zstd makes xtrabackup fail with a broken pipe, so check it first.
+	if zstdCode > 0 {
+		return fail(api.ErrCompress, "zstd exited with %d\n%s", zstdCode, r.scan.Tail(errorTailLines))
 	}
 	facts := r.scan.facts()
-	if xbWaitErr != nil || !facts.completed {
-		reason := "log does not contain \"completed OK!\""
-		if xbWaitErr != nil {
-			reason = xbWaitErr.Error()
+	if waitErr != nil || xbCode != 0 || !facts.completed {
+		var reason string
+		switch {
+		case waitErr != nil:
+			reason = waitErr.Error()
+		case xbCode < 0:
+			reason = "no exit code from xtrabackup"
+		case xbCode > 0:
+			reason = fmt.Sprintf("xtrabackup exited with %d", xbCode)
+		default:
+			reason = "log does not contain \"completed OK!\""
 		}
 		return fail(api.ErrXtrabackup, "%s\n%s", reason, r.scan.Tail(errorTailLines))
 	}
-	if zstdWaitErr != nil {
-		return fail(api.ErrCompress, "%v", zstdWaitErr)
+	if zstdCode < 0 {
+		return fail(api.ErrCompress, "no exit code from zstd\n%s", r.scan.Tail(errorTailLines))
 	}
-	if job.RawSize == 0 || job.CompressedSize == 0 {
+
+	size, err := syncFile(dataPath)
+	if err != nil {
+		return fail(api.ErrCompress, "%v", err)
+	}
+	job.CompressedSize = size
+	if size == 0 {
 		return fail(api.ErrXtrabackup, "backup stream is empty")
 	}
 	return r.collect(facts)
+}
+
+// syncFile flushes the data file written inside the container to disk and
+// returns its size.
+func syncFile(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("open data file: %w", err)
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		return 0, fmt.Errorf("sync data file: %w", err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("stat data file: %w", err)
+	}
+	return fi.Size(), nil
 }
 
 // collect records LSNs, slave position and bitmap use (PRD E-8).
@@ -495,7 +435,8 @@ func (r *run) killInContainer(pidPath string) {
 	}
 }
 
-func (r *run) reportProgress(raw, compressed *atomic.Int64) (stop func()) {
+// reportProgress samples the size of the data file at path.
+func (r *run) reportProgress(path string) (stop func()) {
 	if r.req.Progress == nil {
 		return func() {}
 	}
@@ -516,12 +457,14 @@ func (r *run) reportProgress(raw, compressed *atomic.Int64) (stop func()) {
 			case <-done:
 				return
 			case now := <-t.C:
-				n := raw.Load()
+				var n int64
+				if fi, err := os.Stat(path); err == nil {
+					n = fi.Size()
+				}
 				rate := float64(n-last) / now.Sub(lastAt).Seconds()
 				last, lastAt = n, now
 				r.req.Progress(Progress{
-					RawBytes:        n,
-					CompressedBytes: compressed.Load(),
+					CompressedBytes: n,
 					BytesPerSecond:  rate,
 					Elapsed:         api.Duration(now.Sub(start).Round(time.Millisecond)),
 				})
@@ -590,7 +533,7 @@ func (r *run) finish(ctx context.Context, err error) {
 		r.log.Error("write meta.json", "err", merr)
 	}
 	r.log.Info("job finished", "status", job.Status, "error_code", job.ErrorCode,
-		"duration", job.Duration(), "raw_size", job.RawSize, "compressed_size", job.CompressedSize)
+		"duration", job.Duration(), "compressed_size", job.CompressedSize)
 }
 
 func classify(err error) (api.JobStatus, api.ErrorCode, string) {
@@ -612,7 +555,7 @@ func classify(err error) (api.JobStatus, api.ErrorCode, string) {
 // and metadata for diagnosis.
 func RemoveIncomplete(jobDir string) error {
 	var errs []error
-	for _, name := range []string{DataFile, CheckpointsFile, InfoFile, SlaveInfoFile, pidFile, fifoFile} {
+	for _, name := range []string{DataFile, CheckpointsFile, InfoFile, SlaveInfoFile, pidFile} {
 		if err := os.Remove(filepath.Join(jobDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
@@ -636,13 +579,6 @@ func writeMeta(dir string, job *api.Job) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, MetaFile))
-}
-
-type counter struct{ n *atomic.Int64 }
-
-func (c counter) Write(p []byte) (int, error) {
-	c.n.Add(int64(len(p)))
-	return len(p), nil
 }
 
 // limitedBuffer keeps the first 4 KiB written to it.

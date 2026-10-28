@@ -30,7 +30,7 @@
 | gays_maindb_slave | Percona Server 5.6.51 | 80G | /data (HDD) | 10.23.1.202:3306 |
 
 - 主机：Ubuntu 24.04，32 核，251G 内存，podman 4.9.3。
-- 容器内已有 xtrabackup 2.4.28、mysqldump、mysqlbinlog。
+- 容器内已有 xtrabackup 2.4.28、mysqldump、mysqlbinlog；还需安装 zstd（压缩在容器内执行，占用容器的 CPU 配额）。
 - 所有容器均挂载宿主机 `/data/backup` 到容器内同一路径。
 - `/data` 91T（剩余 88T），`/nvme_data` 1.5T（**已用 95%**）。
 
@@ -231,7 +231,7 @@
 #### 6.4.1 流程
 
 ```
-预检查 → 准备临时凭据 → xtrabackup 流式备份 | zstd 压缩（同时计算 sha256）
+预检查 → 准备临时凭据 → 容器内 xtrabackup 流式备份 | zstd 压缩并写入文件
 → 结果校验 → 提取元数据 → 收尾（恢复 SQL 线程 / 清理凭据 / bitmap 清理）→ 上报
 ```
 
@@ -243,10 +243,10 @@
 | E-2 | 预检查：`Slave_IO_Running` 与 `Slave_SQL_Running` 均为 Yes，`Seconds_Behind_Master` 小于阈值；不满足则任务失败并记录原因 | P0 |
 | E-3 | 预检查：备份目标磁盘剩余空间 > 该项目上次同类备份大小 × 1.5（无历史时按数据目录大小估算） | P0 |
 | E-4 | MySQL 凭据只在内存中持有；执行时写入容器可访问目录下的 600 权限临时 cnf，通过 `--defaults-extra-file` 传入，任务结束后删除；凭据不得出现在命令行参数中 | P0 |
-| E-5 | 备份命令：`podman exec <容器> xtrabackup --backup --stream=xbstream --slave-info --safe-slave-backup --parallel=N [--throttle=N] --extra-lsndir=<元数据目录> [--incremental-basedir=<基准元数据目录>]`，stdout 经 `zstd -T<n> -<level>` 写入文件 | P0 |
-| E-6 | 写入过程中计算 sha256；每 5 秒上报一次已写入字节数和速度 | P0 |
+| E-5 | 备份命令：`podman exec <容器> xtrabackup --backup --stream=xbstream --slave-info --safe-slave-backup --parallel=N [--throttle=N] --extra-lsndir=<元数据目录> [--incremental-basedir=<基准元数据目录>]`，在容器内通过管道交给 `zstd -T<n> -<level>`，由 zstd 直接写入备份目录中的文件 | P0 |
+| E-6 | 每 5 秒上报一次已写入字节数（压缩后）和速度 | P0 |
 | E-7 | 成功判定：xtrabackup 退出码为 0，且日志包含 `completed OK!`，且产物文件非空 | P0 |
-| E-8 | 提取并保存：from_lsn、to_lsn、主库 binlog 文件和位置（slave_info）、备份大小（压缩前 / 后）、耗时、是否使用了 changed page bitmap | P0 |
+| E-8 | 提取并保存：from_lsn、to_lsn、主库 binlog 文件和位置（slave_info）、备份大小（压缩后）、耗时、是否使用了 changed page bitmap | P0 |
 | E-9 | 收尾：确认 `Slave_SQL_Running = Yes`，若因备份中断而停止则执行 `START SLAVE SQL_THREAD` 并记录 | P0 |
 | E-10 | 超时（按项目配置）后终止 xtrabackup，任务记为“超时”，清理不完整文件 | P0 |
 | E-11 | 支持取消正在运行的任务（来自 Web 命令），行为同超时，状态记为“已取消” | P0 |
@@ -262,7 +262,7 @@
         xtrabackup_info
         xtrabackup_slave_info
         backup.log
-        meta.json            # 任务 ID、类型、LSN、sha256、大小、时间等
+        meta.json            # 任务 ID、类型、LSN、大小、时间等
     01-incr/ ...
     02-incr/ ...
 ```
@@ -318,7 +318,7 @@
 |---|---|---|
 | J-1 | 任务状态：`pending`、`running`、`success`、`warning`、`failed`、`skipped`、`canceled` | P0 |
 | J-2 | 历史列表：按主机、项目、类型、状态、时间范围筛选，分页 | P0 |
-| J-3 | 任务详情：计划 / 开始 / 结束时间、耗时、压缩前后大小、速度、LSN、主库位点、链和基准任务、是否使用 bitmap、失败原因代码与摘要、日志尾部（200 行）、文件路径、sha256 | P0 |
+| J-3 | 任务详情：计划 / 开始 / 结束时间、耗时、压缩后大小、速度、LSN、主库位点、链和基准任务、是否使用 bitmap、失败原因代码与摘要、日志尾部（200 行）、文件路径 | P0 |
 | J-4 | 查看完整日志：server 下发“上传日志”命令，agent 上传后展示 | P1 |
 | J-5 | 链视图：按项目展示所有链及每条链的全量和增量，标注可恢复的时间点 | P0 |
 | J-6 | 恢复指引：根据所选备份点，生成对应的解压、`xbstream -x`、`--prepare`（含增量合并顺序）命令 | P1 |
@@ -370,7 +370,7 @@
 | `register_tokens` | id、token_hash、expires_at、used_at、created_by |
 | `hosts` | id、name、hostname、ip、token_hash、agent_version、status、last_heartbeat_at、backup_root、metrics(jsonb：磁盘、bitmap)、containers(jsonb)、revoked_at、created_at |
 | `projects` | id、host_id、name、container、tier、full_interval、incr_interval、offset、incr_mode、retention_days、lag_threshold、parallel、throttle、timeout、retry_count、retry_interval、enabled、mysql_user、mysql_password_enc、config_version、deleted_at、created_at、updated_at |
-| `jobs` | id、host_id、project_id、type(full/incr)、chain_id、base_job_id、trigger(schedule/manual/retry)、status、scheduled_at、started_at、finished_at、raw_size、compressed_size、from_lsn、to_lsn、slave_info(jsonb)、used_bitmap、error_code、error_message、log_tail、path、sha256 |
+| `jobs` | id、host_id、project_id、type(full/incr)、chain_id、base_job_id、trigger(schedule/manual/retry)、status、scheduled_at、started_at、finished_at、compressed_size、from_lsn、to_lsn、slave_info(jsonb)、used_bitmap、error_code、error_message、log_tail、path |
 | `chains` | id、project_id、full_job_id、started_at、last_job_at、status、deleted_at |
 | `job_events` | id、job_id、ts、type、payload(jsonb) |
 | `agent_commands` | id、host_id、type、payload(jsonb)、status、created_by、created_at、acked_at、finished_at、result(jsonb) |
@@ -527,7 +527,7 @@ backup/
 │   ├── store/          # PostgreSQL 访问 + migrations
 │   ├── agent/
 │   │   ├── worker/     # 串行 worker + 文件锁
-│   │   ├── executor/   # 预检查、xtrabackup、zstd、sha256、收尾
+│   │   ├── executor/   # 预检查、xtrabackup、zstd、收尾
 │   │   ├── mysql/      # 复制状态、bitmap 清理
 │   │   ├── podman/
 │   │   ├── retention/
