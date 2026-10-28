@@ -296,5 +296,10 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if s.events.active() {
+		if updated, err := s.store.Host(r.Context(), h.ID); err == nil {
+			s.publish(EventHost, s.hostView(updated))
+		}
+	}
 	return writeJSON(w, http.StatusOK, api.HeartbeatResponse{ConfigVersion: version})
 }

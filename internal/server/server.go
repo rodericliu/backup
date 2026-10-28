@@ -50,6 +50,7 @@ type Server struct {
 	tasks   []task
 	limiter loginLimiter
 	hub     hub
+	events  broker
 }
 
 type task struct {
@@ -117,6 +118,15 @@ func (s *Server) routes() {
 	s.webAPI("POST /jobs/{id}/cancel", s.cancelJob)
 	s.webAPI("POST /jobs/{id}/log/request", s.requestJobLog)
 	s.webAPI("GET /commands/{id}", s.getCommand)
+
+	s.webAPI("GET /jobs", s.listJobs)
+	s.webAPI("GET /jobs/{id}", s.getJob)
+	s.webAPI("GET /jobs/{id}/log", s.getJobLog)
+	s.webAPI("GET /jobs/{id}/restore", s.restoreGuide)
+	s.webAPI("GET /projects/{id}/chains", s.projectChains)
+	s.webAPI("GET /schedule", s.hostSchedule)
+	s.webAPI("GET /dashboard", s.dashboard)
+	s.webAPI("GET /events/stream", s.eventStream)
 
 	s.agentAPI("POST /register", s.register)
 	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))
