@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/rodericliu/backup/internal/server/config"
 	"github.com/rodericliu/backup/internal/store"
 	"github.com/rodericliu/backup/internal/version"
+	"github.com/rodericliu/backup/web"
 )
 
 // API path prefixes (PRD 8).
@@ -32,6 +34,8 @@ type Options struct {
 	Sealer *crypto.Sealer
 	Config *config.Config
 	Logger *slog.Logger
+	// UI is the built web UI; default the embedded one.
+	UI fs.FS
 	// Now returns the current time; default time.Now.
 	Now func() time.Time
 }
@@ -66,6 +70,9 @@ func New(opts Options) *Server {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.UI == nil {
+		opts.UI = web.FS()
+	}
 	s := &Server{
 		store:  opts.Store,
 		sealer: opts.Sealer,
@@ -76,6 +83,7 @@ func New(opts Options) *Server {
 		agent:  http.NewServeMux(),
 	}
 	s.routes()
+	s.web.Handle("GET /", s.uiHandler(opts.UI))
 	return s
 }
 

@@ -23,6 +23,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: zstd
         run: zstd --version || (sudo apt-get update && sudo apt-get install -y zstd)
       - name: gofmt
@@ -35,5 +40,7 @@ jobs:
         run: make vet
       - name: test
         run: make test
+      - name: web
+        run: make web
       - name: build
-        run: make build
+        run: make build-go

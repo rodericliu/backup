@@ -58,7 +58,7 @@ systemctl enable --now backup-agent
 中心 Web 平台（P2 进行中）。需要一个由你创建的 PostgreSQL 库和账号，表结构在启动时自动迁移。
 
 ```bash
-make build                                         # bin/backup-server
+make build                                         # bin/backup-server（含 Web UI，需要 Node 24+）
 install -m 755 bin/backup-server /usr/local/bin/
 useradd --system --no-create-home backup-server
 install -d -m 750 -o root -g backup-server /etc/backup-server
@@ -88,9 +88,18 @@ export BACKUP_TEST_DATABASE_URL='postgres://localhost:5432/postgres?sslmode=disa
 ```
 
 ```bash
-make test    # go test -race ./...
+make test      # go test -race ./...
 make vet
-make build   # 输出到 bin/，默认 linux/amd64
+make build     # 构建前端并嵌入 backup-server，输出到 bin/，默认 linux/amd64
+make build-go  # 只构建 Go（不含前端；server 会提示 UI 未构建）
+```
+
+前端在 `web/`（Vue 3 + Element Plus + ECharts，需要 Node 24+）：
+
+```bash
+cd web && npm ci
+BACKUP_SERVER=https://127.0.0.1:8443 npm run dev   # Vite 开发服务器，/api 代理到本地 backup-server
+npm run build                                       # 输出到 web/dist，由 backup-server embed
 ```
 
 ## 开发流程
