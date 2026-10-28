@@ -49,6 +49,7 @@ type Server struct {
 	// tasks run every minute in the background.
 	tasks   []task
 	limiter loginLimiter
+	hub     hub
 }
 
 type task struct {
@@ -110,6 +111,12 @@ func (s *Server) routes() {
 	s.webAPI("PUT /projects/{id}", s.updateProject)
 	s.webAPI("PATCH /projects/{id}", s.patchProject)
 	s.webAPI("DELETE /projects/{id}", s.deleteProject)
+	s.webAPI("POST /projects/{id}/run", s.runProject)
+	s.webAPI("POST /projects/test-connection", s.testConnection)
+	s.webAPI("POST /hosts/{id}/rescan", s.rescanHost)
+	s.webAPI("POST /jobs/{id}/cancel", s.cancelJob)
+	s.webAPI("POST /jobs/{id}/log/request", s.requestJobLog)
+	s.webAPI("GET /commands/{id}", s.getCommand)
 
 	s.agentAPI("POST /register", s.register)
 	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))
@@ -117,8 +124,14 @@ func (s *Server) routes() {
 	s.agentAPI("POST /jobs/{id}/events", s.requireAgent(s.jobEvents))
 	s.agentAPI("PUT /jobs/{id}", s.requireAgent(s.putJob))
 	s.agentAPI("POST /jobs/{id}/log", s.requireAgent(s.uploadJobLog))
+	s.agentAPI("GET /commands", s.requireAgent(s.pollCommands))
+	s.agentAPI("POST /commands/{id}/result", s.requireAgent(s.commandResult))
 
-	s.tasks = append(s.tasks, task{"delete expired sessions", s.deleteExpiredSessions})
+	s.tasks = append(s.tasks,
+		task{"delete expired sessions", s.deleteExpiredSessions},
+		task{"expire commands", s.expireCommands},
+		task{"purge deleted projects", s.purgeDeleted},
+	)
 }
 
 // webAPI registers an authenticated web API route; pattern is

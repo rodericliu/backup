@@ -292,6 +292,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	s.audit(r, currentUser(r), auditProjectDelete, "project", fmt.Sprint(p.ID), map[string]any{"name": p.Name, "files": policy})
+	if policy == store.DeletePurge {
+		if err := s.purgeDeleted(r.Context()); err != nil {
+			return err
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

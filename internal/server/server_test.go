@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rodericliu/backup/internal/crypto"
@@ -39,6 +40,18 @@ type testEnv struct {
 	web   *httptest.Server
 	agent *httptest.Server
 	clock *clock
+	dsn   string
+}
+
+// storePool connects to the test database directly, to inspect raw rows.
+func (e *testEnv) storePool(t *testing.T) *pgx.Conn {
+	t.Helper()
+	c, err := pgx.Connect(t.Context(), e.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close(context.Background()) })
+	return c
 }
 
 type clock struct {
@@ -72,7 +85,7 @@ func (e *testEnv) api(path string) string { return e.web.URL + WebAPIPrefix + pa
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	st := storetest.New(t)
+	st, dsn := storetest.NewWithURL(t)
 	cfg, err := config.Parse([]byte("timezone: UTC"))
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +94,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &testEnv{t: t, store: st, clock: &clock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}}
+	e := &testEnv{t: t, store: st, dsn: dsn, clock: &clock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}}
 	e.srv = New(Options{Store: st, Sealer: sealer, Config: cfg, Logger: slog.New(slog.DiscardHandler), Now: e.clock.Now})
 	e.web = httptest.NewTLSServer(e.srv.WebHandler())
 	e.agent = httptest.NewTLSServer(e.srv.AgentHandler())
