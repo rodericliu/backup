@@ -568,3 +568,20 @@ func TestLock(t *testing.T) {
 	}
 	_ = unlock2()
 }
+
+func TestRecoverKeepsJobsQueuedByThisProcess(t *testing.T) {
+	e := setup(t, project("gays", 0, 1))
+	id, err := e.w.Enqueue(t.Context(), "gays", api.JobFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.w.recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := e.db.Job(t.Context(), id); j.Status != api.StatusPending {
+		t.Errorf("job enqueued before Run = %s, want pending", j.Status)
+	}
+	if s := e.w.Status(); len(s.Queue) != 1 {
+		t.Errorf("queue = %d, want 1", len(s.Queue))
+	}
+}
