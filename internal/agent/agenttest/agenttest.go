@@ -85,7 +85,7 @@ done
 to=$((from + 1000))
 printf 'backup_type = %s\nfrom_lsn = %s\nto_lsn = %s\nlast_lsn = %s\ncompact = 0\n' "$type" "$from" "$to" "$to" > "$lsndir/xtrabackup_checkpoints"
 echo "tool_name = xtrabackup" > "$lsndir/xtrabackup_info"
-echo "MySQL slave binlog position: master host '10.0.0.1', filename 'mysql-bin.000042', position '4711'" >&2
+echo "MySQL slave binlog position: master host '10.0.0.1', filename 'mysql-bin.000042', position '4711', channel name: ''" >&2
 [ "$FAKE_XB" = nook ] && exit 0
 echo "xtrabackup: Transaction log of lsn ($from) to ($to) was copied." >&2
 echo "$(date) completed OK!" >&2
