@@ -1,0 +1,33 @@
+# /etc/backup-server/server.yaml (chmod 600: may contain the database password)
+
+listen: "0.0.0.0:8443"          # Web UI + management API
+agent_listen: "0.0.0.0:9443"    # Agent API, open only to the backup servers; empty shares listen
+
+tls:                            # backup-server cert init / cert issue -host <name/IP>...
+  cert: /etc/backup-server/tls/server.crt
+  key:  /etc/backup-server/tls/server.key
+
+database:                       # created by you; tables are migrated at startup
+  host: pg-host
+  port: 5432
+  name: backup
+  user: backup
+  password: ""                  # or the environment variable BACKUP_DB_PASSWORD
+  sslmode: require              # disable / require / verify-full
+  max_conns: 10
+
+secrets:                        # backup-server keygen; back it up
+  master_key_file: /etc/backup-server/master.key
+
+auth:
+  session_ttl: 12h
+  bootstrap_admin: admin        # created on first start; the password is printed to the log
+
+agent:
+  heartbeat_timeout: 60s
+
+timezone: Local                 # must match the agents' timezone; used for schedule prediction
+
+log:
+  level: info
+  dir: /var/log/backup-server

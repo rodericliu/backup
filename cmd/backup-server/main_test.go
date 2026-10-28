@@ -51,3 +51,33 @@ func TestCertAndKeygen(t *testing.T) {
 		t.Error("cert issue without -host: want error")
 	}
 }
+
+func TestCheck(t *testing.T) {
+	dir := t.TempDir()
+	var out strings.Builder
+	for _, args := range [][]string{
+		{"cert", "init", "-dir", filepath.Join(dir, "ca")},
+		{"cert", "issue", "-ca-dir", filepath.Join(dir, "ca"), "-out", filepath.Join(dir, "tls"), "-host", "localhost"},
+		{"keygen", "-out", filepath.Join(dir, "master.key")},
+	} {
+		if err := run(args, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := filepath.Join(dir, "server.yaml")
+	doc := "tls: {cert: " + filepath.Join(dir, "tls", "server.crt") + ", key: " + filepath.Join(dir, "tls", "server.key") + "}\n" +
+		"secrets: {master_key_file: " + filepath.Join(dir, "master.key") + "}\n"
+	if err := os.WriteFile(cfg, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{"check", "-config", cfg}, &out); err != nil || !strings.Contains(out.String(), "is valid") {
+		t.Errorf("check: %q %v", out.String(), err)
+	}
+	if err := os.Remove(filepath.Join(dir, "master.key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"check", "-config", cfg}, &out); err == nil {
+		t.Error("check without master key: want error")
+	}
+}
