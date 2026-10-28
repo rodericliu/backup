@@ -115,3 +115,12 @@ func (d *DB) queryEvents(ctx context.Context, query string, args ...any) ([]Even
 	}
 	return events, nil
 }
+
+// LastEventSeq returns the sequence number of the newest event, or 0.
+func (d *DB) LastEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	if err := d.db.QueryRowContext(ctx, "SELECT coalesce(max(seq), 0) FROM job_events").Scan(&seq); err != nil {
+		return 0, fmt.Errorf("last event seq: %w", err)
+	}
+	return seq, nil
+}

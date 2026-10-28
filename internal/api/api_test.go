@@ -2,6 +2,8 @@ package api
 
 import (
 	json "encoding/json/v2"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +170,18 @@ func TestValidateReportsAllErrors(t *testing.T) {
 	for _, want := range []string{"name", "container", "tier", "full_interval", "mysql.user"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestMySQLConfigRedacted(t *testing.T) {
+	p := validProject()
+	p.MySQL.Password = "s3cret"
+	var buf strings.Builder
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("project", "project", p, "mysql", p.MySQL)
+	for _, s := range []string{fmt.Sprintf("%v", p), fmt.Sprintf("%+v", p), p.MySQL.String(), buf.String()} {
+		if strings.Contains(s, "s3cret") {
+			t.Errorf("password leaked: %s", s)
 		}
 	}
 }

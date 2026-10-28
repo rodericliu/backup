@@ -1,0 +1,68 @@
+# /etc/backup-agent/agent.yaml (chmod 600: contains MySQL passwords)
+
+# P2: server connection. Leave server_url empty to run standalone with the
+# projects below.
+server_url: ""
+server_ca: /etc/backup-agent/tls/ca.crt
+register_token_file: /etc/backup-agent/register.token
+
+state_dir: /var/lib/backup-agent
+backup_root: /data/backup        # mounted at the same path in every container
+lock_file: /run/backup-agent.lock
+timezone: Local                  # schedules align to local midnight
+podman: podman
+low_io_priority: true            # ionice -c3 / nice -n 19 for xtrabackup and zstd
+bitmap_alert_size: 10737418240   # warn when changed page bitmaps exceed 10 GiB
+
+zstd:
+  threads: 8
+  level: 3
+
+log:
+  level: info
+  dir: /var/log/backup-agent
+
+# Default schedule of backup-esh-01 (PRD 6.3.2): a 4h cycle with one full
+# backup per hour. Omitted parameters take the tier defaults:
+#   important: full_interval 4h, incr_interval 1h
+#   normal:    full_interval 24h, no incrementals
+#   both:      incr_mode chained, retention_days 7, lag_threshold 10m,
+#              parallel 4, timeout 6h, retry_count 1, retry_interval 10m
+projects:
+  - name: fetisch
+    container: fetisch_maindb_slave
+    tier: important
+    offset: 0h
+    priority: 1
+    mysql: &backup_user
+      user: backup
+      password: "change-me"
+
+  - name: poppen
+    container: poppen_maindb_slave
+    tier: important
+    offset: 1h
+    priority: 2
+    mysql: *backup_user
+
+  - name: kmv2_maindb
+    container: kmv2_maindb_slave
+    tier: important
+    offset: 2h
+    priority: 3
+    # throttle: 100              # xtrabackup --throttle (IO pairs/s); data shares the HDD
+    mysql: *backup_user
+
+  - name: gays
+    container: gays_maindb_slave
+    tier: important
+    offset: 3h
+    priority: 4
+    mysql: *backup_user
+
+  - name: kmv2_message
+    container: kmv2_message_slave
+    tier: normal
+    offset: 3h                   # daily at 03:00, after the gays full backup
+    priority: 5
+    mysql: *backup_user

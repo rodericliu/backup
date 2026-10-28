@@ -184,14 +184,18 @@ func (w *Worker) Enqueue(ctx context.Context, project string, typ api.JobType) (
 		ID: uuid.NewV7(), Project: project, Type: typ,
 		Trigger: api.TriggerManual, Status: api.StatusPending, ScheduledAt: w.opts.Now(),
 	}
+	id := job.ID
 	w.add(ctx, job)
 	w.signal()
-	return job.ID, nil
+	return id, nil
 }
 
 // add queues a pending job, superseding a pending job of the same project and
-// type (PRD S-4).
+// type (PRD S-4). The job is saved before it is queued: once queued, the loop
+// goroutine owns it.
 func (w *Worker) add(ctx context.Context, job *api.Job) {
+	w.save(ctx, job)
+	id, at := job.ID, job.ScheduledAt
 	w.mu.Lock()
 	var old *api.Job
 	if i := slices.IndexFunc(w.queue, func(q *api.Job) bool {
@@ -204,9 +208,8 @@ func (w *Worker) add(ctx context.Context, job *api.Job) {
 	w.mu.Unlock()
 
 	if old != nil {
-		w.skip(ctx, old, api.ErrSuperseded, fmt.Sprintf("superseded by job %s scheduled at %s", job.ID, job.ScheduledAt.Format(time.RFC3339)))
+		w.skip(ctx, old, api.ErrSuperseded, fmt.Sprintf("superseded by job %s scheduled at %s", id, at.Format(time.RFC3339)))
 	}
-	w.save(ctx, job)
 }
 
 // next removes and returns the first ready job: planned time, then full
@@ -522,8 +525,18 @@ func (w *Worker) recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Jobs enqueued by this process before Run started are not leftovers.
+	w.mu.Lock()
+	queued := make(map[uuid.UUID]bool, len(w.queue))
+	for _, j := range w.queue {
+		queued[j.ID] = true
+	}
+	w.mu.Unlock()
 	for i := range jobs {
 		job := &jobs[i]
+		if queued[job.ID] {
+			continue
+		}
 		if job.Status == api.StatusRunning {
 			job.Status, job.ErrorCode = api.StatusFailed, api.ErrInterrupted
 			job.ErrorMessage = "agent restarted while the job was running"
@@ -560,4 +573,9 @@ func (w *Worker) recover(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Projects returns a copy of the current project configuration.
+func (w *Worker) Projects() []api.ProjectConfig {
+	return slices.Clone(*w.projects.Load())
 }

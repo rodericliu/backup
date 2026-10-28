@@ -1,0 +1,19 @@
+[Unit]
+Description=MySQL replica backup agent
+Documentation=https://github.com/rodericliu/backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/backup-agent run -config /etc/backup-agent/agent.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+# Give a running backup time to be stopped and cleaned up.
+TimeoutStopSec=180
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
