@@ -120,11 +120,17 @@ func TestJobsAndChains(t *testing.T) {
 	if len(g.Sequence) != 3 || g.Sequence[0].ID != full.ID || g.Sequence[2].ID != i2.ID || len(g.Steps) != 4 {
 		t.Fatalf("guide = %+v", g)
 	}
+	// The host reported no data directory mount of the container: the
+	// commands run on the host and the notes say what to adapt.
+	dir := "/data/backup/restore/gays-" + i2.FinishedAt.Format("20060102-1504")
+	if g.Env.Dir != dir || g.Env.Container != "gays_maindb_slave" || g.Env.DataDir != "" || len(g.Notes) == 0 {
+		t.Errorf("environment = %+v, notes %q", g.Env, g.Notes)
+	}
 	prepare := g.Steps[1].Commands
 	for _, want := range []string{
-		"xtrabackup --prepare --apply-log-only --target-dir=/restore/full\n",
-		"--apply-log-only --target-dir=/restore/full --incremental-dir=/restore/incr1\n",
-		"xtrabackup --prepare --target-dir=/restore/full --incremental-dir=/restore/incr2\n",
+		"xtrabackup --prepare --apply-log-only --target-dir=" + dir + "/full\n",
+		"--apply-log-only --target-dir=" + dir + "/full --incremental-dir=" + dir + "/incr1\n",
+		"xtrabackup --prepare --target-dir=" + dir + "/full --incremental-dir=" + dir + "/incr2\n",
 	} {
 		if !strings.Contains(prepare, want) {
 			t.Errorf("prepare step missing %q:\n%s", want, prepare)
@@ -137,9 +143,61 @@ func TestJobsAndChains(t *testing.T) {
 		t.Errorf("restore failed job = %d", code)
 	}
 	do(t, admin, "GET", e.api("/jobs/"+full.ID.String()+"/restore"), nil, &g)
-	if len(g.Sequence) != 1 || !strings.Contains(g.Steps[1].Commands, "xtrabackup --prepare --target-dir=/restore/full\n") ||
+	fullDir := "/data/backup/restore/gays-" + full.FinishedAt.Format("20060102-1504")
+	if len(g.Sequence) != 1 || !strings.Contains(g.Steps[1].Commands, "xtrabackup --prepare --target-dir="+fullDir+"/full\n") ||
 		strings.Contains(g.Steps[1].Commands, "apply-log-only") {
 		t.Errorf("full-only guide = %+v", g.Steps)
+	}
+
+	// With the data directory mount known, every command uses the container.
+	hb := sampleHeartbeat()
+	hb.Containers = []api.Container{{Name: "gays_maindb_slave", Image: "percona:5.6", Running: true, State: "running",
+		Mounts: []api.Mount{{Source: "/data/backup", Destination: "/data/backup"}, {Source: "/data/gays", Destination: "/var/lib/mysql/"}}}}
+	if code := e.agentDo(token, "POST", "/heartbeat", hb, nil); code != http.StatusOK {
+		t.Fatalf("heartbeat = %d", code)
+	}
+	do(t, admin, "GET", e.api("/jobs/"+i2.ID.String()+"/restore"), nil, &g)
+	if g.Env.DataDir != "/data/gays" || g.Env.Image != "percona:5.6" || len(g.Steps) != 7 {
+		t.Fatalf("container guide = %+v %+v", g.Env, g.Steps)
+	}
+	all := ""
+	for _, st := range g.Steps {
+		all += st.Commands
+	}
+	for _, want := range []string{
+		"podman exec gays_maindb_slave sh -c 'zstd -dc /data/backup/gays/20261028-0300-chain/full/backup.xbstream.zst | xbstream -x -C " + dir + "/full'\n",
+		"podman exec gays_maindb_slave xtrabackup --prepare --target-dir=" + dir + "/full --incremental-dir=" + dir + "/incr2\n",
+		"podman stop gays_maindb_slave\nmv /data/gays /data/gays.before-restore-" + i2.FinishedAt.Format("20060102-1504") + "\nmkdir /data/gays\n",
+		"-v /data/backup:/data/backup -v /data/gays:/var/lib/mysql",
+		"-c 'xtrabackup --copy-back --target-dir=" + dir + "/full --datadir=/var/lib/mysql && chown -R mysql:mysql /var/lib/mysql'",
+		"podman start gays_maindb_slave\n",
+		"podman exec -it gays_maindb_slave mysql -uroot -p\nCHANGE MASTER TO",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("container guide lacks %q:\n%s", want, all)
+		}
+	}
+
+	// The web UI asks for English: the same commands with English text.
+	var en RestoreGuide
+	do(t, admin, "GET", e.api("/jobs/"+i2.ID.String()+"/restore"), nil, &en, "Accept-Language", "en-US,en;q=0.9")
+	if len(en.Steps) != len(g.Steps) || len(en.Notes) != len(g.Notes) {
+		t.Fatalf("English guide = %+v", en)
+	}
+	texts := en.Notes
+	for i := range en.Steps {
+		if en.Steps[i].Commands != g.Steps[i].Commands {
+			t.Errorf("English step %d commands = %q, want %q", i, en.Steps[i].Commands, g.Steps[i].Commands)
+		}
+		texts = append(texts, en.Steps[i].Title)
+	}
+	for _, text := range texts {
+		if strings.ContainsFunc(text, func(r rune) bool { return r >= 0x4e00 && r <= 0x9fff }) {
+			t.Errorf("English guide contains Chinese: %q", text)
+		}
+	}
+	if !strings.HasPrefix(en.Steps[0].Title, "Extract the backups in container gays_maindb_slave") {
+		t.Errorf("English extract title = %q", en.Steps[0].Title)
 	}
 }
 
