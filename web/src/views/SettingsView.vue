@@ -5,6 +5,7 @@ import { user } from '@/auth'
 import { datetime } from '@/format'
 import UsersPanel from './settings/UsersPanel.vue'
 import AuditPanel from './settings/AuditPanel.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,20 +24,29 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
-    <div class="page-header"><h2>设置</h2></div>
+  <div class="bk-page">
+    <PageHeader :title="$t('nav.settings')" :eyebrow="$t('settings.eyebrow')" :description="$t('settings.description')" />
     <el-tabs v-model="tab">
-      <el-tab-pane label="用户管理" name="users" lazy><UsersPanel /></el-tab-pane>
-      <el-tab-pane label="审计日志" name="audit" lazy><AuditPanel /></el-tab-pane>
-      <el-tab-pane label="账号与系统" name="about" lazy>
-        <el-descriptions :column="1" border style="max-width: 640px">
-          <el-descriptions-item label="当前用户">{{ user?.username }}</el-descriptions-item>
-          <el-descriptions-item label="最近登录">{{ datetime(user?.last_login_at) }}</el-descriptions-item>
-          <el-descriptions-item label="密码"><router-link :to="{ name: 'password' }">修改密码</router-link></el-descriptions-item>
-          <el-descriptions-item label="backup-server 版本">{{ version }}</el-descriptions-item>
-          <el-descriptions-item label="企业微信日报与告警">第二阶段（P5）提供</el-descriptions-item>
+      <el-tab-pane :label="$t('settings.users')" name="users" lazy><UsersPanel /></el-tab-pane>
+      <el-tab-pane :label="$t('settings.audit')" name="audit" lazy><AuditPanel /></el-tab-pane>
+      <el-tab-pane :label="$t('settings.about')" name="about" lazy>
+        <el-descriptions :column="1" border class="about">
+          <el-descriptions-item :label="$t('users.me')">{{ user?.username }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('users.lastLogin')">{{ datetime(user?.last_login_at) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('login.password')"><router-link :to="{ name: 'password' }">{{ $t('password.title') }}</router-link></el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.version')">{{ version }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('settings.wecom')">{{ $t('settings.wecomLater') }}</el-descriptions-item>
         </el-descriptions>
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
+
+<style scoped>
+.about {
+  max-width: 640px;
+}
+.about :deep(.el-descriptions__label) {
+  width: 220px;
+}
+</style>

@@ -1,4 +1,5 @@
 import { api } from '@/api'
+import { keyed } from '@/i18n'
 import type { Command } from '@/types'
 
 const finished = new Set(['done', 'failed', 'expired'])
@@ -14,10 +15,4 @@ export async function waitCommand(id: number, timeoutMs = 60_000): Promise<Comma
   }
 }
 
-export const commandStatusText: Record<string, string> = {
-  pending: '等待 agent 领取',
-  sent: 'agent 执行中',
-  done: '完成',
-  failed: '失败',
-  expired: '已过期（agent 未在期限内响应）',
-}
+export const commandStatusText = keyed('commandStatus')

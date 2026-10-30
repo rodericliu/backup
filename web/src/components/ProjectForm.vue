@@ -5,6 +5,7 @@ import { api, errorMessage } from '@/api'
 import { commandStatusText, waitCommand } from '@/composables/command'
 import { duration, goDuration, parseDuration } from '@/format'
 import type { Check, Command, Host, OffsetScore, Project, ProjectConfig, Tier } from '@/types'
+import { keyed, t } from '@/i18n'
 
 // ProjectForm creates or edits a project (PRD P-1 ~ P-5, P-9). Durations are
 // edited in minutes and sent as Go duration strings.
@@ -85,8 +86,8 @@ function reset() {
 }
 
 // Choosing a tier applies its template (PRD P-2).
-function onTier(t: string | number | boolean | undefined) {
-  applyConfig(props.templates[t as Tier])
+function onTier(tier: string | number | boolean | undefined) {
+  applyConfig(props.templates[tier as Tier])
 }
 
 const host = computed(() => props.hosts.find((h) => h.id === form.host_id))
@@ -106,16 +107,16 @@ watch(
   },
 )
 
-const rules: FormRules = {
-  host_id: [{ required: true, message: '请选择主机' }],
-  container: [{ required: true, message: '请选择容器' }],
+const rules = computed<FormRules>(() => ({
+  host_id: [{ required: true, message: t('projectForm.hostRequired') }],
+  container: [{ required: true, message: t('projectForm.containerRequired') }],
   name: [
-    { required: true, message: '请输入项目名' },
-    { pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, message: '字母、数字、下划线、点、减号，不能以符号开头' },
+    { required: true, message: t('projectForm.nameRequired') },
+    { pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, message: t('projectForm.namePattern') },
   ],
-  user: [{ required: true, message: '请输入备份账号' }],
-  password: [{ validator: (_r, v, cb) => (editing.value || v ? cb() : cb(new Error('请输入密码'))) }],
-}
+  user: [{ required: true, message: t('projectForm.userRequired') }],
+  password: [{ validator: (_r, v, cb) => (editing.value || v ? cb() : cb(new Error(t('login.passwordRequired')))) }],
+}))
 
 function body(): ProjectConfig & { host_id?: number } {
   return {
@@ -153,7 +154,7 @@ async function submit() {
     const p = editing.value
       ? await api.put<Project>(`/projects/${props.project!.id}`, body())
       : await api.post<Project>('/projects', body())
-    ElMessage.success(editing.value ? '已保存，agent 下次心跳时生效' : '已创建，agent 下次心跳时生效')
+    ElMessage.success(editing.value ? t('projectForm.saved') : t('projectForm.created'))
     emit('saved', p)
   } catch (e) {
     ElMessage.error(errorMessage(e))
@@ -197,7 +198,7 @@ const checks = ref<Check[] | null>(null)
 const testStatus = ref('')
 async function testConnection() {
   if (!form.host_id || !form.container || !form.user) {
-    ElMessage.warning('请先选择主机、容器并填写账号')
+    ElMessage.warning(t('projectForm.testNeeds'))
     return
   }
   testing.value = true
@@ -217,14 +218,7 @@ async function testConnection() {
   }
 }
 
-const checkNames: Record<string, string> = {
-  container: '容器',
-  tools: '工具',
-  backup_root: '备份目录挂载',
-  credentials: '临时凭据',
-  replication: '账号与复制状态',
-  changed_page_bitmap: 'changed page bitmap',
-}
+const checkNames = keyed('projectForm.checks')
 
 function hhmm(m: number) {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`
@@ -234,132 +228,139 @@ watch(() => props.project, reset, { immediate: true })
 </script>
 
 <template>
-  <el-form ref="formRef" :model="form" :rules="rules" label-width="130px" class="project-form">
-    <el-divider content-position="left">基本信息</el-divider>
-    <el-form-item label="主机" prop="host_id">
-      <el-select v-model="form.host_id" :disabled="editing" placeholder="选择主机">
+  <el-form
+    ref="formRef"
+    :model="form"
+    :rules="rules"
+    :label-width="$t('projectForm.labelWidth')"
+    :style="{ '--label-width': $t('projectForm.labelWidth') }"
+    class="project-form"
+  >
+    <el-divider content-position="left">{{ $t('projectForm.basic') }}</el-divider>
+    <el-form-item :label="$t('job.host')" prop="host_id">
+      <el-select v-model="form.host_id" :disabled="editing" :placeholder="$t('schedule.selectHost')">
         <el-option v-for="h in hosts.filter((h) => !h.revoked_at)" :key="h.id" :label="h.name" :value="h.id" />
       </el-select>
     </el-form-item>
-    <el-form-item label="容器" prop="container">
-      <el-select v-model="form.container" filterable placeholder="从 agent 上报的容器中选择" @change="onContainer">
+    <el-form-item :label="$t('projects.container')" prop="container">
+      <el-select v-model="form.container" filterable :placeholder="$t('projectForm.containerPlaceholder')" @change="onContainer">
         <el-option v-for="c in containers" :key="c.name" :label="c.name" :value="c.name">
           <span>{{ c.name }}</span>
           <span class="muted option-extra">{{ c.image }} · {{ c.state }}</span>
         </el-option>
       </el-select>
-      <span v-if="host && !containers.length" class="muted hint">该主机尚未上报容器，请在主机页面重新扫描</span>
+      <span v-if="host && !containers.length" class="muted hint">{{ $t('projectForm.noContainers') }}</span>
     </el-form-item>
-    <el-form-item label="项目名" prop="name">
+    <el-form-item :label="$t('projectForm.name')" prop="name">
       <el-input v-model="form.name" :disabled="editing" maxlength="64" />
-      <div class="muted hint">备份目录 &lt;backup_root&gt;/&lt;项目名&gt;；从独立运行切换过来的项目必须沿用原名称。创建后不可修改。</div>
+      <div class="muted hint">{{ $t('projectForm.nameHint') }}</div>
     </el-form-item>
-    <el-form-item label="等级">
+    <el-form-item :label="$t('projectForm.tier')">
       <el-radio-group v-model="form.tier" @change="onTier">
-        <el-radio-button value="important">重要（4h 全量 + 1h 增量）</el-radio-button>
-        <el-radio-button value="normal">普通（24h 全量）</el-radio-button>
+        <el-radio-button value="important">{{ $t('projectForm.tierImportant') }}</el-radio-button>
+        <el-radio-button value="normal">{{ $t('projectForm.tierNormal') }}</el-radio-button>
       </el-radio-group>
     </el-form-item>
 
-    <el-divider content-position="left">排班</el-divider>
-    <el-form-item label="全量周期">
+    <el-divider content-position="left">{{ $t('nav.schedule') }}</el-divider>
+    <el-form-item :label="$t('projectForm.fullInterval')">
       <el-select v-model="form.full" class="short">
         <el-option v-for="m in fullOptions" :key="m" :label="duration(m * 60)" :value="m" />
       </el-select>
     </el-form-item>
-    <el-form-item label="增量周期">
+    <el-form-item :label="$t('projectForm.incrInterval')">
       <el-select v-model="form.incr" class="short">
-        <el-option v-for="m in incrOptions" :key="m" :label="m ? duration(m * 60) : '不做增量'" :value="m" />
+        <el-option v-for="m in incrOptions" :key="m" :label="m ? duration(m * 60) : $t('projectForm.noIncr')" :value="m" />
       </el-select>
     </el-form-item>
-    <el-form-item label="偏移量">
+    <el-form-item :label="$t('projectForm.offset')">
       <el-input-number v-model="form.offset" :min="0" :max="form.full - 1" :step="15" class="short" />
-      <span class="unit">分钟（{{ hhmm(form.offset) }}）</span>
-      <el-button :loading="recommending" :disabled="!form.host_id" @click="recommend">推荐</el-button>
+      <span class="unit">{{ $t('projectForm.minutes') }}{{ $t('common.paren', { s: hhmm(form.offset) }) }}</span>
+      <el-button :loading="recommending" :disabled="!form.host_id" @click="recommend">{{ $t('projectForm.recommend') }}</el-button>
     </el-form-item>
     <el-form-item v-if="scores" label="">
       <div class="scores">
-        <div class="muted">按“超负荷小时数 → 排队等待 → 峰值负载”排序，耗时取近 14 天平均（无历史按全量 30 分钟、增量 5 分钟估算）：</div>
+        <div class="muted">{{ $t('projectForm.scoresHint') }}</div>
         <el-table :data="topScores" size="small" @row-click="(r: OffsetScore) => (form.offset = min(r.offset))" class="clickable">
-          <el-table-column label="偏移量">
+          <el-table-column :label="$t('projectForm.offset')">
             <template #default="{ row }">
               {{ hhmm(min(row.offset)) }}
-              <el-tag v-if="min(row.offset) === best" size="small" type="success">推荐</el-tag>
+              <el-tag v-if="min(row.offset) === best" size="small" type="success">{{ $t('projectForm.recommended') }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="超负荷小时" prop="overloaded_hours" />
-          <el-table-column label="峰值小时负载"><template #default="{ row }">{{ goDuration(row.max_hour_load) }}</template></el-table-column>
-          <el-table-column label="总排队等待"><template #default="{ row }">{{ goDuration(row.total_wait) }}</template></el-table-column>
+          <el-table-column :label="$t('projectForm.overloadedHours')" prop="overloaded_hours" />
+          <el-table-column :label="$t('projectForm.peakLoad')"><template #default="{ row }">{{ goDuration(row.max_hour_load) }}</template></el-table-column>
+          <el-table-column :label="$t('projectForm.totalWait')"><template #default="{ row }">{{ goDuration(row.total_wait) }}</template></el-table-column>
         </el-table>
       </div>
     </el-form-item>
-    <el-form-item v-if="form.incr" label="增量模式">
+    <el-form-item v-if="form.incr" :label="$t('projectForm.incrMode')">
       <el-radio-group v-model="form.incr_mode">
-        <el-radio value="chained">链式（基于上一份，体积小且稳定）</el-radio>
-        <el-radio value="differential">差异（基于本链全量，恢复只需全量 + 1 份）</el-radio>
+        <el-radio value="chained">{{ $t('projectForm.chained') }}</el-radio>
+        <el-radio value="differential">{{ $t('projectForm.differential') }}</el-radio>
       </el-radio-group>
     </el-form-item>
-    <el-form-item label="优先级">
+    <el-form-item :label="$t('projectForm.priority')">
       <el-input-number v-model="form.priority" :min="0" :max="100" class="short" />
-      <span class="unit muted">同一时间点数值小的先执行</span>
+      <span class="unit muted">{{ $t('projectForm.priorityHint') }}</span>
     </el-form-item>
 
-    <el-divider content-position="left">执行参数</el-divider>
+    <el-divider content-position="left">{{ $t('projectForm.execution') }}</el-divider>
     <div class="grid">
-      <el-form-item label="保留天数">
+      <el-form-item :label="$t('projectForm.retentionDays')">
         <el-input-number v-model="form.retention_days" :min="1" :max="3650" />
       </el-form-item>
-      <el-form-item label="复制延迟阈值">
-        <el-input-number v-model="form.lag" :min="0" :max="1440" /><span class="unit">分钟</span>
+      <el-form-item :label="$t('projectForm.lag')">
+        <el-input-number v-model="form.lag" :min="0" :max="1440" /><span class="unit">{{ $t('projectForm.minutes') }}</span>
       </el-form-item>
       <el-form-item label="--parallel">
         <el-input-number v-model="form.parallel" :min="1" :max="64" />
       </el-form-item>
       <el-form-item label="--throttle">
-        <el-input-number v-model="form.throttle" :min="0" :max="100000" /><span class="unit">0 不限</span>
+        <el-input-number v-model="form.throttle" :min="0" :max="100000" /><span class="unit">{{ $t('projectForm.unlimited') }}</span>
       </el-form-item>
-      <el-form-item label="超时">
-        <el-input-number v-model="form.timeout" :min="1" :max="10080" :step="30" /><span class="unit">分钟</span>
+      <el-form-item :label="$t('projectForm.timeout')">
+        <el-input-number v-model="form.timeout" :min="1" :max="10080" :step="30" /><span class="unit">{{ $t('projectForm.minutes') }}</span>
       </el-form-item>
-      <el-form-item label="失败重试">
-        <el-input-number v-model="form.retry_count" :min="0" :max="10" /><span class="unit">次</span>
+      <el-form-item :label="$t('projectForm.retries')">
+        <el-input-number v-model="form.retry_count" :min="0" :max="10" /><span class="unit">{{ $t('projectForm.times') }}</span>
       </el-form-item>
-      <el-form-item label="重试间隔">
-        <el-input-number v-model="form.retry_interval" :min="1" :max="1440" /><span class="unit">分钟</span>
+      <el-form-item :label="$t('projectForm.retryInterval')">
+        <el-input-number v-model="form.retry_interval" :min="1" :max="1440" /><span class="unit">{{ $t('projectForm.minutes') }}</span>
       </el-form-item>
-      <el-form-item label="启用">
+      <el-form-item :label="$t('projects.enabledCol')">
         <el-switch v-model="form.enabled" />
       </el-form-item>
     </div>
 
-    <el-divider content-position="left">MySQL 备份账号</el-divider>
-    <el-form-item label="用户名" prop="user"><el-input v-model="form.user" autocomplete="off" class="medium" /></el-form-item>
-    <el-form-item label="密码" prop="password">
+    <el-divider content-position="left">{{ $t('projectForm.account') }}</el-divider>
+    <el-form-item :label="$t('login.username')" prop="user"><el-input v-model="form.user" autocomplete="off" class="medium" /></el-form-item>
+    <el-form-item :label="$t('login.password')" prop="password">
       <el-input
         v-model="form.password"
         type="password"
         show-password
         autocomplete="new-password"
         class="medium"
-        :placeholder="editing ? '留空表示不修改' : ''"
+        :placeholder="editing ? $t('projectForm.passwordKeep') : ''"
       />
-      <span class="muted hint">加密保存，不会回显</span>
+      <span class="muted hint">{{ $t('projectForm.passwordHint') }}</span>
     </el-form-item>
     <el-collapse class="advanced">
-      <el-collapse-item title="连接参数（可选，默认使用容器内 mysql 客户端的默认值）">
+      <el-collapse-item :title="$t('projectForm.connection')">
         <el-form-item label="socket"><el-input v-model="form.socket" class="medium" /></el-form-item>
         <el-form-item label="host"><el-input v-model="form.mysql_host" class="medium" /></el-form-item>
         <el-form-item label="port"><el-input-number v-model="form.port" :min="0" :max="65535" /></el-form-item>
       </el-collapse-item>
     </el-collapse>
-    <el-form-item label="连接测试">
-      <el-button :loading="testing" @click="testConnection">测试连接</el-button>
-      <span v-if="testing" class="muted hint">agent 正在检查容器、工具、挂载、账号与复制状态…</span>
+    <el-form-item :label="$t('projectForm.test')">
+      <el-button :loading="testing" @click="testConnection">{{ $t('projectForm.testButton') }}</el-button>
+      <span v-if="testing" class="muted hint">{{ $t('projectForm.testing') }}</span>
     </el-form-item>
     <el-form-item v-if="checks" label="">
       <div class="checks">
         <div v-for="c in checks" :key="c.name" class="check">
-          <el-tag :type="c.ok ? 'success' : 'danger'" size="small">{{ c.ok ? '通过' : '失败' }}</el-tag>
+          <el-tag :type="c.ok ? 'success' : 'danger'" size="small">{{ c.ok ? $t('projectForm.passed') : $t('status.failed') }}</el-tag>
           <b>{{ checkNames[c.name] ?? c.name }}</b>
           <span class="muted">{{ c.message }}</span>
         </div>
@@ -368,8 +369,8 @@ watch(() => props.project, reset, { immediate: true })
     </el-form-item>
 
     <div class="footer">
-      <el-button @click="emit('cancel')">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
+      <el-button @click="emit('cancel')">{{ $t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="saving" @click="submit">{{ editing ? $t('common.save') : $t('common.create') }}</el-button>
     </div>
   </el-form>
 </template>
@@ -404,7 +405,7 @@ watch(() => props.project, reset, { immediate: true })
   cursor: pointer;
 }
 .advanced {
-  margin: 0 0 16px 130px;
+  margin: 0 0 16px var(--label-width);
 }
 .checks {
   width: 100%;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
@@ -10,6 +10,9 @@ import { ago, bytes, datetime, typeText } from '@/format'
 import type { Command, Host, RegisterToken } from '@/types'
 import HostStatus from '@/components/HostStatus.vue'
 import HostCard from '@/components/HostCard.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import { pageContext } from '@/composables/assistant'
+import { t } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +31,8 @@ async function load() {
   }
 }
 onMounted(load)
+
+const onlineCount = computed(() => hosts.value.filter((h) => h.status === 'online').length)
 
 useEvents('host', (h) => {
   const i = hosts.value.findIndex((x) => x.id === h.id)
@@ -49,6 +54,16 @@ const drawer = computed({
     if (!v) router.replace({ query: { ...route.query, id: undefined } })
   },
 })
+watch(
+  () => selected.value?.id,
+  (id) => {
+    if (id) pageContext.host_id = id
+    else delete pageContext.host_id
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => delete pageContext.host_id)
+
 function open(h: Host) {
   router.replace({ query: { ...route.query, id: h.id } })
 }
@@ -58,15 +73,15 @@ const bitmapAlert = 10 * 2 ** 30
 async function setPaused(h: Host, paused: boolean) {
   if (paused) {
     await ElMessageBox.confirm(
-      `暂停后 ${h.name} 不再按计划排队备份（手动执行和已排队的任务仍会执行），暂停期间错过的计划点不会补跑。`,
-      '暂停调度',
-      { type: 'warning', confirmButtonText: '暂停' },
+      t('hosts.pauseConfirm', { name: h.name }),
+      t('hosts.pause'),
+      { type: 'warning', confirmButtonText: t('hosts.pauseButton') },
     )
   }
   try {
     const updated = await api.patch<Host>(`/hosts/${h.id}`, { paused })
     Object.assign(h, updated)
-    ElMessage.success(paused ? '已暂停调度，agent 下次心跳时生效' : '已恢复调度')
+    ElMessage.success(paused ? t('hosts.paused') : t('hosts.resumed'))
   } catch (e) {
     ElMessage.error(errorMessage(e))
   }
@@ -74,13 +89,13 @@ async function setPaused(h: Host, paused: boolean) {
 
 async function revoke(h: Host) {
   await ElMessageBox.confirm(
-    `吊销后 ${h.name} 的 agent 无法再上报或获取配置，但会按最后一次配置继续备份。重新接入需要新的注册 token。`,
-    '吊销主机',
-    { type: 'error', confirmButtonText: '吊销', confirmButtonClass: 'el-button--danger' },
+    t('hosts.revokeConfirm', { name: h.name }),
+    t('hosts.revokeTitle'),
+    { type: 'error', confirmButtonText: t('hosts.revoke'), confirmButtonClass: 'el-button--danger' },
   )
   try {
     Object.assign(h, await api.post<Host>(`/hosts/${h.id}/revoke`))
-    ElMessage.success('已吊销')
+    ElMessage.success(t('hosts.revoked'))
   } catch (e) {
     ElMessage.error(errorMessage(e))
   }
@@ -93,7 +108,7 @@ async function rescan(h: Host) {
     const c = await api.post<Command>(`/hosts/${h.id}/rescan`)
     const done = await waitCommand(c.id, 30_000)
     if (done.status === 'done') {
-      ElMessage.success('容器列表已刷新：' + (done.result?.message ?? ''))
+      ElMessage.success(t('hosts.rescanned', { msg: done.result?.message ?? '' }))
       setTimeout(load, 1000)
     } else {
       ElMessage.warning(commandStatusText[done.status] ?? done.status)
@@ -123,9 +138,9 @@ function openTokenDialog() {
   tokenForm.ttl = '24h'
   tokenDialog.value = true
 }
-async function deleteToken(t: RegisterToken) {
+async function deleteToken(tok: RegisterToken) {
   try {
-    await api.del(`/register-tokens/${t.id}`)
+    await api.del(`/register-tokens/${tok.id}`)
     load()
   } catch (e) {
     ElMessage.error(errorMessage(e))
@@ -134,131 +149,139 @@ async function deleteToken(t: RegisterToken) {
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
+    ElMessage.success(t('common.copied'))
   } catch {
-    ElMessage.warning('浏览器不允许复制，请手动选择')
+    ElMessage.warning(t('common.copyFailed'))
   }
 }
-const agentURL = computed(() => `https://${location.hostname}:<agent_listen 端口>`)
+const agentURL = computed(() => `https://${location.hostname}:<${t('hosts.agentListenPort')}>`)
 const install = computed(
   () => `install -d -m 700 /etc/backup-agent /etc/backup-agent/tls
 echo '${created.value?.token ?? ''}' > /etc/backup-agent/register.token
 chmod 600 /etc/backup-agent/register.token
-# 拷贝 server 的 ca.crt 到 /etc/backup-agent/tls/ca.crt
-# 在 /etc/backup-agent/agent.yaml 中设置 server_url: ${agentURL.value}
+# ${t('hosts.installCopyCA')}
+# ${t('hosts.installServerURL', { url: agentURL.value })}
 systemctl enable --now backup-agent`,
 )
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
-      <h2>主机</h2>
-      <div>
-        <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openTokenDialog">接入新主机</el-button>
-      </div>
-    </div>
+  <div class="bk-page">
+    <PageHeader :title="$t('nav.hosts')" :eyebrow="$t('nav.monitor')" :description="$t('hosts.description')">
+      <template #actions>
+        <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
+        <el-button type="primary" :icon="Plus" @click="openTokenDialog">{{ $t('hosts.add') }}</el-button>
+      </template>
+    </PageHeader>
 
+    <div class="bk-panel">
+      <div class="bk-panel__head">
+        <div class="bk-panel__title">{{ $t('hosts.list') }}</div>
+        <span class="bk-panel__subtitle">{{ $t('hosts.online', { n: onlineCount, total: hosts.length }) }}</span>
+      </div>
     <el-table v-loading="loading" :data="hosts" @row-click="open" class="clickable">
-      <el-table-column label="名称" min-width="140">
+      <el-table-column :label="$t('hosts.name')" min-width="140">
         <template #default="{ row }"><b>{{ row.name }}</b></template>
       </el-table-column>
-      <el-table-column label="状态" min-width="160">
+      <el-table-column :label="$t('job.status')" min-width="160">
         <template #default="{ row }"><HostStatus :status="row.status" :paused="row.paused" :compatible="row.compatible" /></template>
       </el-table-column>
-      <el-table-column prop="ip" label="IP" min-width="120" />
-      <el-table-column prop="agent_version" label="agent 版本" min-width="100" />
-      <el-table-column label="最后心跳" min-width="110">
+      <el-table-column label="IP" min-width="120"><template #default="{ row }"><span class="bk-data">{{ row.ip }}</span></template></el-table-column>
+      <el-table-column :label="$t('hosts.agentVersion')" min-width="110"><template #default="{ row }"><span class="bk-data">{{ row.agent_version }}</span></template></el-table-column>
+      <el-table-column :label="$t('hosts.lastHeartbeat')" min-width="120">
         <template #default="{ row }">
           <el-tooltip :content="datetime(row.last_heartbeat_at)"><span>{{ ago(row.last_heartbeat_at) }}</span></el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="当前任务" min-width="180">
+      <el-table-column :label="$t('hostCard.current')" min-width="180">
         <template #default="{ row }">
           <span v-if="row.state?.current" :class="{ muted: row.status !== 'online' }">
             {{ row.state.current.project }} {{ typeText[row.state.current.type] }}
             <template v-if="row.state.progress">· {{ bytes(row.state.progress.compressed_bytes) }}</template>
           </span>
-          <span v-else class="muted">空闲</span>
-          <span v-if="row.state?.queue?.length" class="muted">（排队 {{ row.state.queue.length }}）</span>
+          <span v-else class="muted">{{ $t('hostCard.idle') }}</span>
+          <span v-if="row.state?.queue?.length" class="muted">{{ $t('hosts.queued', { n: row.state.queue.length }) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="磁盘最高使用率" min-width="120">
+      <el-table-column :label="$t('hosts.maxDisk')" min-width="130">
         <template #default="{ row }">
-          <span v-if="maxDisk(row) !== null" :class="{ danger: maxDisk(row)! > 0.9 }">{{ (maxDisk(row)! * 100).toFixed(1) }}%</span>
+          <span v-if="maxDisk(row) !== null" class="bk-num" :class="{ danger: maxDisk(row)! > 0.9 }">{{ (maxDisk(row)! * 100).toFixed(1) }}%</span>
           <span v-else class="muted">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="配置" min-width="100">
+      <el-table-column :label="$t('hosts.config')" min-width="110">
         <template #default="{ row }">
-          <el-tag v-if="row.applied_config_version >= row.config_version" type="success" size="small">已生效</el-tag>
-          <el-tooltip v-else :content="`最新 v${row.config_version}，agent 已生效 v${row.applied_config_version}`">
-            <el-tag type="warning" size="small">等待生效</el-tag>
+          <el-tag v-if="row.applied_config_version >= row.config_version" type="success" size="small">{{ $t('hosts.applied') }}</el-tag>
+          <el-tooltip v-else :content="$t('hosts.configPending', { latest: row.config_version, applied: row.applied_config_version })">
+            <el-tag type="warning" size="small">{{ $t('hosts.pending') }}</el-tag>
           </el-tooltip>
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
-    <el-card v-if="tokens.length" shadow="never" class="tokens">
-      <template #header>未使用的注册 token</template>
+    <div v-if="tokens.length" class="bk-panel">
+      <div class="bk-panel__head">
+        <div class="bk-panel__title">{{ $t('hosts.tokens') }}</div>
+        <span class="bk-panel__subtitle">{{ $t('hosts.tokensHint') }}</span>
+      </div>
       <el-table :data="tokens" size="small">
-        <el-table-column prop="note" label="备注" />
-        <el-table-column label="创建时间"><template #default="{ row }">{{ datetime(row.created_at) }}</template></el-table-column>
-        <el-table-column label="过期时间"><template #default="{ row }">{{ datetime(row.expires_at) }}</template></el-table-column>
+        <el-table-column prop="note" :label="$t('hosts.note')" />
+        <el-table-column :label="$t('hosts.createdAt')"><template #default="{ row }">{{ datetime(row.created_at) }}</template></el-table-column>
+        <el-table-column :label="$t('hosts.expiresAt')"><template #default="{ row }">{{ datetime(row.expires_at) }}</template></el-table-column>
         <el-table-column width="90">
           <template #default="{ row }">
-            <el-popconfirm title="删除这个注册 token？" @confirm="deleteToken(row)">
-              <template #reference><el-button link type="danger">删除</el-button></template>
+            <el-popconfirm :title="$t('hosts.deleteToken')" @confirm="deleteToken(row)">
+              <template #reference><el-button link type="danger">{{ $t('common.delete') }}</el-button></template>
             </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </div>
 
     <el-drawer v-model="drawer" :title="selected?.name" size="min(960px, 90vw)">
       <template v-if="selected">
         <div class="actions">
-          <el-button v-if="!selected.paused" :disabled="!!selected.revoked_at" @click="setPaused(selected, true)">暂停调度</el-button>
-          <el-button v-else type="success" @click="setPaused(selected, false)">恢复调度</el-button>
-          <el-button :loading="rescanning" :disabled="selected.status !== 'online'" @click="rescan(selected)">重新扫描容器</el-button>
-          <el-button type="danger" plain :disabled="!!selected.revoked_at" @click="revoke(selected)">吊销</el-button>
+          <el-button v-if="!selected.paused" :disabled="!!selected.revoked_at" @click="setPaused(selected, true)">{{ $t('hosts.pause') }}</el-button>
+          <el-button v-else type="success" @click="setPaused(selected, false)">{{ $t('hosts.resume') }}</el-button>
+          <el-button :loading="rescanning" :disabled="selected.status !== 'online'" @click="rescan(selected)">{{ $t('hosts.rescan') }}</el-button>
+          <el-button type="danger" plain :disabled="!!selected.revoked_at" @click="revoke(selected)">{{ $t('hosts.revoke') }}</el-button>
         </div>
 
         <el-descriptions :column="2" border size="small" class="block">
-          <el-descriptions-item label="状态"><HostStatus :status="selected.status" :paused="selected.paused" :compatible="selected.compatible" /></el-descriptions-item>
-          <el-descriptions-item label="主机名">{{ selected.hostname }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('job.status')"><HostStatus :status="selected.status" :paused="selected.paused" :compatible="selected.compatible" /></el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.hostname')">{{ selected.hostname }}</el-descriptions-item>
           <el-descriptions-item label="IP">{{ selected.ip }}</el-descriptions-item>
-          <el-descriptions-item label="agent 版本">{{ selected.agent_version }}（API v{{ selected.api_version }}）</el-descriptions-item>
-          <el-descriptions-item label="备份根目录"><span class="mono">{{ selected.backup_root || '-' }}</span></el-descriptions-item>
-          <el-descriptions-item label="最后心跳">{{ datetime(selected.last_heartbeat_at) }}</el-descriptions-item>
-          <el-descriptions-item label="配置版本">最新 v{{ selected.config_version }} / 已生效 v{{ selected.applied_config_version }}</el-descriptions-item>
-          <el-descriptions-item label="接入时间">{{ datetime(selected.created_at) }}</el-descriptions-item>
-          <el-descriptions-item v-if="selected.revoked_at" label="吊销时间">{{ datetime(selected.revoked_at) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.agentVersion')">{{ selected.agent_version }}{{ $t('common.paren', { s: `API v${selected.api_version}` }) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.backupRoot')"><span class="mono">{{ selected.backup_root || '-' }}</span></el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.lastHeartbeat')">{{ datetime(selected.last_heartbeat_at) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.configVersion')">{{ $t('hosts.configVersions', { latest: selected.config_version, applied: selected.applied_config_version }) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('hosts.registeredAt')">{{ datetime(selected.created_at) }}</el-descriptions-item>
+          <el-descriptions-item v-if="selected.revoked_at" :label="$t('hosts.revokedAt')">{{ datetime(selected.revoked_at) }}</el-descriptions-item>
         </el-descriptions>
 
         <HostCard :host="selected" :queue-limit="20" class="block" />
 
-        <h4>changed page bitmap</h4>
-        <el-table :data="selected.metrics?.bitmaps ?? []" size="small" empty-text="未上报" class="block">
-          <el-table-column prop="project" label="项目" />
-          <el-table-column label="大小">
+        <h4 class="section-label">changed page bitmap</h4>
+        <el-table :data="selected.metrics?.bitmaps ?? []" size="small" :empty-text="$t('hosts.notReported')" class="block">
+          <el-table-column prop="project" :label="$t('job.project')" />
+          <el-table-column :label="$t('job.size')">
             <template #default="{ row }"><span :class="{ danger: row.bytes > bitmapAlert }">{{ bytes(row.bytes) }}</span></template>
           </el-table-column>
-          <el-table-column label="检查时间"><template #default="{ row }">{{ datetime(row.checked_at) }}</template></el-table-column>
+          <el-table-column :label="$t('hosts.checkedAt')"><template #default="{ row }">{{ datetime(row.checked_at) }}</template></el-table-column>
         </el-table>
 
-        <h4>容器（{{ selected.containers.length }}）</h4>
-        <el-table :data="selected.containers" size="small" empty-text="未上报">
-          <el-table-column prop="name" label="名称" min-width="160" />
-          <el-table-column prop="image" label="镜像" min-width="160" show-overflow-tooltip />
-          <el-table-column label="状态" width="80">
+        <h4 class="section-label">{{ $t('hosts.containers', { n: selected.containers.length }) }}</h4>
+        <el-table :data="selected.containers" size="small" :empty-text="$t('hosts.notReported')">
+          <el-table-column prop="name" :label="$t('hosts.name')" min-width="160" />
+          <el-table-column prop="image" :label="$t('hosts.image')" min-width="160" show-overflow-tooltip />
+          <el-table-column :label="$t('job.status')" width="90">
             <template #default="{ row }"><el-tag :type="row.running ? 'success' : 'info'" size="small">{{ row.state }}</el-tag></template>
           </el-table-column>
-          <el-table-column label="端口" min-width="150">
+          <el-table-column :label="$t('hosts.ports')" min-width="150">
             <template #default="{ row }"><div v-for="p in row.ports" :key="p" class="mono">{{ p }}</div></template>
           </el-table-column>
-          <el-table-column label="挂载" min-width="220">
+          <el-table-column :label="$t('hosts.mounts')" min-width="220">
             <template #default="{ row }">
               <div v-for="m in row.mounts" :key="m.destination" class="mono wrap">{{ m.source }} → {{ m.destination }}</div>
             </template>
@@ -267,34 +290,34 @@ systemctl enable --now backup-agent`,
       </template>
     </el-drawer>
 
-    <el-dialog v-model="tokenDialog" title="接入新主机" width="640px">
+    <el-dialog v-model="tokenDialog" :title="$t('hosts.add')" width="640px">
       <template v-if="!created">
-        <el-form label-width="90px" @submit.prevent="createToken">
-          <el-form-item label="备注"><el-input v-model="tokenForm.note" placeholder="例如 backup-inx-01" maxlength="200" /></el-form-item>
-          <el-form-item label="有效期">
+        <el-form :label-width="$t('hosts.tokenLabelWidth')" @submit.prevent="createToken">
+          <el-form-item :label="$t('hosts.note')"><el-input v-model="tokenForm.note" :placeholder="$t('hosts.notePlaceholder')" maxlength="200" /></el-form-item>
+          <el-form-item :label="$t('hosts.ttl')">
             <el-radio-group v-model="tokenForm.ttl">
-              <el-radio-button value="1h">1 小时</el-radio-button>
-              <el-radio-button value="24h">24 小时</el-radio-button>
-              <el-radio-button value="168h">7 天</el-radio-button>
+              <el-radio-button value="1h">{{ $t('hosts.hours', { n: 1 }) }}</el-radio-button>
+              <el-radio-button value="24h">{{ $t('hosts.hours', { n: 24 }) }}</el-radio-button>
+              <el-radio-button value="168h">{{ $t('hosts.days', { n: 7 }) }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
         </el-form>
-        <p class="muted">注册 token 只能使用一次，agent 用它换取长期 token 后自动登记主机（同名主机会沿用原记录）。</p>
+        <p class="muted">{{ $t('hosts.tokenHelp') }}</p>
       </template>
       <template v-else>
-        <el-alert title="token 只显示这一次，请立即保存" type="warning" show-icon :closable="false" />
+        <el-alert :title="$t('hosts.tokenOnce')" type="warning" show-icon :closable="false" />
         <div class="token">
           <code class="mono">{{ created.token }}</code>
-          <el-button size="small" @click="copy(created.token!)">复制</el-button>
+          <el-button size="small" @click="copy(created.token!)">{{ $t('common.copy') }}</el-button>
         </div>
-        <p>过期时间：{{ datetime(created.expires_at) }}。在新主机上执行：</p>
+        <p>{{ $t('hosts.tokenExpires', { time: datetime(created.expires_at) }) }}</p>
         <pre class="code">{{ install }}</pre>
-        <p class="muted">agent 注册后主机出现在列表中，确认在线后到“项目”页面添加项目。</p>
+        <p class="muted">{{ $t('hosts.afterRegister') }}</p>
       </template>
       <template #footer>
-        <el-button v-if="!created" @click="tokenDialog = false">取消</el-button>
-        <el-button v-if="!created" type="primary" @click="createToken">生成</el-button>
-        <el-button v-else type="primary" @click="tokenDialog = false">完成</el-button>
+        <el-button v-if="!created" @click="tokenDialog = false">{{ $t('common.cancel') }}</el-button>
+        <el-button v-if="!created" type="primary" @click="createToken">{{ $t('hosts.generate') }}</el-button>
+        <el-button v-else type="primary" @click="tokenDialog = false">{{ $t('common.done') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -304,17 +327,20 @@ systemctl enable --now backup-agent`,
 .clickable :deep(.el-table__row) {
   cursor: pointer;
 }
-.tokens {
-  margin-top: 20px;
-}
 .actions {
-  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.actions .el-button + .el-button {
+  margin-left: 0;
 }
 .block {
   margin-bottom: 16px;
 }
 h4 {
-  margin: 16px 0 8px;
+  margin: 20px 0 8px;
 }
 .wrap {
   word-break: break-all;
@@ -325,8 +351,9 @@ h4 {
   gap: 8px;
   margin: 16px 0;
   padding: 10px;
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
+  background: var(--bk-subtle);
+  border: 1px solid var(--bk-border);
+  border-radius: 8px;
   word-break: break-all;
 }
 </style>

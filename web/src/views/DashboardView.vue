@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { CircleCheck, CircleClose, Coin, Monitor, Refresh, Remove, Warning, WarningFilled } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api'
 import { useEvents } from '@/composables/events'
 import { ago, bytes, datetime, errorCodeText, shortTime, typeText } from '@/format'
 import type { Dashboard, Progress } from '@/types'
 import HostCard from '@/components/HostCard.vue'
 import JobStatus from '@/components/JobStatus.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import { t } from '@/i18n'
 
 const data = ref<Dashboard | null>(null)
 const loading = ref(false)
@@ -17,6 +20,7 @@ async function load() {
   loading.value = true
   try {
     data.value = await api.get<Dashboard>('/dashboard')
+    lastUpdated.value = new Date()
   } catch (e) {
     ElMessage.error(errorMessage(e))
   } finally {
@@ -62,14 +66,16 @@ onBeforeUnmount(() => {
   clearTimeout(reloadTimer)
 })
 
+const lastUpdated = ref<Date | null>(null)
+
 const stats = computed(() => {
-  const t = data.value?.today
+  const d = data.value?.today
   return [
-    { label: '成功', value: t?.success ?? 0, cls: 'ok' },
-    { label: '警告', value: t?.warning ?? 0, cls: 'warn' },
-    { label: '失败', value: t?.failed ?? 0, cls: 'bad' },
-    { label: '跳过', value: t?.skipped ?? 0, cls: '' },
-    { label: '备份量', value: bytes(t?.bytes ?? 0), cls: '' },
+    { label: t('dashboard.todaySuccess'), value: d?.success ?? 0, tone: 'success', icon: CircleCheck },
+    { label: t('dashboard.todayWarning'), value: d?.warning ?? 0, tone: 'warning', icon: Warning },
+    { label: t('dashboard.todayFailed'), value: d?.failed ?? 0, tone: 'danger', icon: CircleClose },
+    { label: t('dashboard.todaySkipped'), value: d?.skipped ?? 0, tone: 'info', icon: Remove },
+    { label: t('dashboard.todayBytes'), value: bytes(d?.bytes ?? 0), tone: 'primary', icon: Coin },
   ]
 })
 
@@ -79,113 +85,194 @@ const staleCount = computed(() => data.value?.projects.filter((p) => p.stale).le
 </script>
 
 <template>
-  <div v-loading="loading && !data">
+  <div v-loading="loading && !data" class="bk-page">
+    <PageHeader :title="$t('nav.dashboard')" :eyebrow="$t('nav.monitor')" :description="$t('dashboard.description')">
+      <template #actions>
+        <span class="muted updated">{{ $t('dashboard.updatedAt', { time: lastUpdated ? lastUpdated.toLocaleTimeString() : '-' }) }}</span>
+        <el-button :icon="Refresh" :loading="loading" @click="load">{{ $t('common.refresh') }}</el-button>
+      </template>
+    </PageHeader>
+
     <div class="stats">
-      <el-card v-for="s in stats" :key="s.label" shadow="never" class="stat">
-        <div class="stat-label">今日{{ s.label }}</div>
-        <div class="stat-value" :class="s.cls">{{ s.value }}</div>
-      </el-card>
+      <div v-for="s in stats" :key="s.label" class="bk-panel stat" :class="`tone-${s.tone}`">
+        <div class="stat-icon"><el-icon :size="20"><component :is="s.icon" /></el-icon></div>
+        <div>
+          <div class="stat-label">{{ s.label }}</div>
+          <div class="stat-value bk-num">{{ s.value }}</div>
+        </div>
+      </div>
     </div>
 
-    <h3>主机</h3>
-    <el-empty v-if="data && !data.hosts.length" description="还没有主机，请在“主机”页面生成注册 token 接入 agent" />
-    <div class="card-grid">
-      <HostCard v-for="h in data?.hosts" :key="h.id" :host="h" :progress="h.state.current ? progress.get(h.state.current.id) : undefined" />
-    </div>
+    <section>
+      <div class="section-head">
+        <h2><el-icon><Monitor /></el-icon>{{ $t('nav.hosts') }}</h2>
+        <span v-if="data?.hosts.length" class="muted">{{ $t('dashboard.hostCount', { n: data.hosts.length }) }}</span>
+      </div>
+      <div v-if="data && !data.hosts.length" class="bk-panel">
+        <el-empty :description="$t('dashboard.noHosts')" :image-size="72" />
+      </div>
+      <div class="card-grid">
+        <HostCard v-for="h in data?.hosts" :key="h.id" :host="h" :progress="h.state.current ? progress.get(h.state.current.id) : undefined" />
+      </div>
+    </section>
 
     <div class="two-col">
-      <el-card shadow="never">
-        <template #header>
-          项目健康
-          <el-tag v-if="staleCount" type="danger" size="small">{{ staleCount }} 个项目超过两个全量周期无成功备份</el-tag>
-        </template>
+      <div class="bk-panel">
+        <div class="bk-panel__head">
+          <div class="bk-panel__title">{{ $t('dashboard.health') }}</div>
+          <el-tag v-if="staleCount" type="danger" size="small"><el-icon class="tag-icon"><WarningFilled /></el-icon>{{ $t('dashboard.staleCount', { n: staleCount }) }}</el-tag>
+        </div>
         <el-table :data="data?.projects ?? []" size="small" :row-class-name="staleRow">
-          <el-table-column label="项目" min-width="120">
+          <el-table-column :label="$t('job.project')" min-width="120">
             <template #default="{ row }">
-              <router-link :to="{ name: 'jobs', query: { project_id: row.id } }">{{ row.name }}</router-link>
-              <el-tag v-if="!row.enabled" size="small" type="info">已停用</el-tag>
+              <router-link :to="{ name: 'jobs', query: { project_id: row.id } }" class="strong">{{ row.name }}</router-link>
+              <el-tag v-if="!row.enabled" size="small" type="info" class="ml">{{ $t('dashboard.disabled') }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="host_name" label="主机" min-width="110" />
-          <el-table-column label="最近成功全量" min-width="130">
+          <el-table-column prop="host_name" :label="$t('job.host')" min-width="110" />
+          <el-table-column :label="$t('dashboard.lastFull')" min-width="130">
             <template #default="{ row }">
-              <el-tooltip :content="datetime(row.last_full)" :disabled="!row.last_full"><span>{{ row.last_full ? ago(row.last_full) : '无' }}</span></el-tooltip>
+              <el-tooltip :content="datetime(row.last_full)" :disabled="!row.last_full"><span>{{ row.last_full ? ago(row.last_full) : $t('common.none') }}</span></el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column label="最近成功增量" min-width="130">
+          <el-table-column :label="$t('dashboard.lastIncr')" min-width="130">
             <template #default="{ row }">
-              <el-tooltip :content="datetime(row.last_incr)" :disabled="!row.last_incr"><span>{{ row.last_incr ? ago(row.last_incr) : '无' }}</span></el-tooltip>
+              <el-tooltip :content="datetime(row.last_incr)" :disabled="!row.last_incr"><span>{{ row.last_incr ? ago(row.last_incr) : $t('common.none') }}</span></el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column :label="$t('job.status')" width="90">
             <template #default="{ row }">
-              <el-tag :type="row.stale ? 'danger' : 'success'" size="small">{{ row.stale ? '过期' : '正常' }}</el-tag>
+              <el-tag :type="row.stale ? 'danger' : 'success'" size="small">{{ row.stale ? $t('dashboard.stale') : $t('dashboard.healthy') }}</el-tag>
             </template>
           </el-table-column>
         </el-table>
-      </el-card>
+      </div>
 
-      <el-card shadow="never">
-        <template #header>最近失败（7 天）</template>
-        <el-empty v-if="data && !data.recent_failures.length" description="没有失败的任务" :image-size="60" />
+      <div class="bk-panel">
+        <div class="bk-panel__head">
+          <div class="bk-panel__title">{{ $t('dashboard.recentFailures') }}</div>
+          <span class="bk-panel__subtitle">{{ $t('dashboard.last7Days') }}</span>
+        </div>
+        <el-empty v-if="data && !data.recent_failures.length" :description="$t('dashboard.noFailures')" :image-size="60" />
         <el-table v-else :data="data?.recent_failures ?? []" size="small">
-          <el-table-column label="时间" width="110">
-            <template #default="{ row }">{{ shortTime(row.scheduled_at) }}</template>
+          <el-table-column :label="$t('dashboard.time')" width="110">
+            <template #default="{ row }"><span class="bk-num">{{ shortTime(row.scheduled_at) }}</span></template>
           </el-table-column>
-          <el-table-column label="项目" min-width="110">
+          <el-table-column :label="$t('job.project')" min-width="110">
             <template #default="{ row }">{{ row.project }} {{ typeText[row.type] }}</template>
           </el-table-column>
-          <el-table-column label="原因" min-width="160">
+          <el-table-column :label="$t('dashboard.reason')" min-width="160">
             <template #default="{ row }">
               <router-link :to="{ name: 'jobs', query: { id: row.id } }">{{ errorCodeText[row.error_code] ?? row.error_code ?? '-' }}</router-link>
               <div class="muted ellipsis">{{ row.error_message }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="80">
+          <el-table-column :label="$t('job.status')" width="90">
             <template #default="{ row }"><JobStatus :status="row.status" /></template>
           </el-table-column>
         </el-table>
-      </el-card>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.updated {
+  font-size: 0.8125rem;
+  margin-inline-end: 4px;
+}
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
   gap: 16px;
 }
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px var(--bk-panel-padding);
+}
+.stat-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: 44px;
+  block-size: 44px;
+  border-radius: 10px;
+  background: var(--tone-bg);
+  color: var(--tone);
+}
+.tone-success {
+  --tone: var(--el-color-success);
+  --tone-bg: var(--el-color-success-light-9);
+}
+.tone-warning {
+  --tone: var(--el-color-warning);
+  --tone-bg: var(--el-color-warning-light-9);
+}
+.tone-danger {
+  --tone: var(--el-color-danger);
+  --tone-bg: var(--el-color-danger-light-9);
+}
+.tone-info {
+  --tone: var(--el-color-info);
+  --tone-bg: var(--el-color-info-light-9);
+}
+.tone-primary {
+  --tone: var(--el-color-primary);
+  --tone-bg: var(--el-color-primary-light-9);
+}
 .stat-label {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
+  color: var(--bk-secondary);
+  font-size: 0.8125rem;
 }
 .stat-value {
-  font-size: 26px;
+  margin-top: 2px;
+  color: var(--bk-on-surface);
+  font-size: 1.625rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.tone-success .stat-value,
+.tone-warning .stat-value,
+.tone-danger .stat-value {
+  color: var(--tone);
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1rem;
   font-weight: 600;
-  margin-top: 6px;
 }
-.stat-value.ok {
-  color: var(--el-color-success);
-}
-.stat-value.warn {
-  color: var(--el-color-warning);
-}
-.stat-value.bad {
-  color: var(--el-color-danger);
-}
-h3 {
-  margin: 20px 0 12px;
+.section-head h2 .el-icon {
+  color: var(--bk-secondary);
 }
 .two-col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-top: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--bk-gap);
+}
+.strong {
+  font-weight: 600;
+}
+.ml {
+  margin-left: 6px;
+}
+.tag-icon {
+  margin-right: 4px;
+  vertical-align: -2px;
 }
 @media (max-width: 1200px) {
   .two-col {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .ellipsis {

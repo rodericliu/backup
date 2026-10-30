@@ -7,6 +7,8 @@ import { api, errorMessage } from '@/api'
 import { goDuration, shortTime } from '@/format'
 import type { Host, Project, Schedule } from '@/types'
 import GanttChart from '@/components/GanttChart.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import { t } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,11 +20,11 @@ const hostId = ref<number | undefined>(route.query.host_id ? Number(route.query.
 
 // Windows: [hours before now, total hours].
 const windows = [
-  { label: '过去 12 小时 + 未来 24 小时', before: 12, hours: 36 },
-  { label: '未来 24 小时', before: 0, hours: 24 },
-  { label: '未来 48 小时', before: 0, hours: 48 },
-  { label: '未来 7 天', before: 0, hours: 168 },
-  { label: '过去 48 小时', before: 48, hours: 48 },
+  { label: () => t('schedule.windowAround'), before: 12, hours: 36 },
+  { label: () => t('schedule.windowNext', { n: 24 }), before: 0, hours: 24 },
+  { label: () => t('schedule.windowNext', { n: 48 }), before: 0, hours: 48 },
+  { label: () => t('schedule.windowNextDays', { n: 7 }), before: 0, hours: 168 },
+  { label: () => t('schedule.windowPast', { n: 48 }), before: 48, hours: 48 },
 ]
 const win = ref(0)
 
@@ -64,39 +66,42 @@ const queued = computed(() => {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
-      <h2>排班预测</h2>
-      <el-button :icon="Refresh" @click="load">刷新</el-button>
-    </div>
+  <div class="bk-page">
+    <PageHeader :title="$t('schedule.title')" :eyebrow="$t('nav.backup')" :description="$t('schedule.description')">
+      <template #actions>
+        <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
+      </template>
+    </PageHeader>
     <div class="toolbar">
-      <el-select v-model="hostId" placeholder="选择主机" style="width: 200px">
+      <el-select v-model="hostId" :placeholder="$t('schedule.selectHost')" style="width: 200px">
         <el-option v-for="h in hosts" :key="h.id" :label="h.name" :value="h.id" />
       </el-select>
       <el-radio-group v-model="win">
-        <el-radio-button v-for="(w, i) in windows" :key="i" :value="i">{{ w.label }}</el-radio-button>
+        <el-radio-button v-for="(w, i) in windows" :key="i" :value="i">{{ w.label() }}</el-radio-button>
       </el-radio-group>
     </div>
 
-    <el-empty v-if="!hosts.length" description="还没有主机" />
-    <el-card v-else v-loading="loading" shadow="never">
+    <div v-if="!hosts.length" class="bk-panel"><el-empty :description="$t('schedule.noHosts')" :image-size="72" /></div>
+    <div v-else v-loading="loading" class="bk-panel">
       <div v-if="schedule" class="summary">
-        <span>时区 {{ schedule.timezone }}</span>
-        <span>计划 {{ schedule.runs.length }} 次备份</span>
-        <span v-if="queued">最长排队 {{ Math.round(queued.max) }} 分钟</span>
-        <span v-if="queued?.superseded" class="danger">{{ queued.superseded }} 次计划将被覆盖跳过</span>
-        <span v-if="overloaded.length" class="danger">
-          {{ overloaded.length }} 个超负荷小时：
-          <template v-for="(h, i) in overloaded.slice(0, 8)" :key="h.hour">{{ i ? '、' : '' }}{{ shortTime(h.hour) }}（{{ goDuration(h.total) }}）</template>
-          <template v-if="overloaded.length > 8"> 等</template>
-        </span>
-        <span v-else class="ok">没有超负荷的小时</span>
+        <div class="metric"><span class="section-label">{{ $t('schedule.timezone') }}</span><b>{{ schedule.timezone }}</b></div>
+        <div class="metric"><span class="section-label">{{ $t('schedule.plannedRuns') }}</span><b class="bk-num">{{ $t('schedule.times', { n: schedule.runs.length }) }}</b></div>
+        <div v-if="queued" class="metric"><span class="section-label">{{ $t('schedule.maxQueue') }}</span><b class="bk-num">{{ $t('schedule.minutes', { n: Math.round(queued.max) }) }}</b></div>
+        <div v-if="queued?.superseded" class="metric"><span class="section-label">{{ $t('schedule.superseded') }}</span><b class="bk-num danger">{{ $t('schedule.times', { n: queued.superseded }) }}</b></div>
+        <div class="metric wide">
+          <span class="section-label">{{ $t('schedule.load') }}</span>
+          <span v-if="overloaded.length" class="danger">
+            <b>{{ $t('schedule.overloadedHours', { n: overloaded.length }) }}</b>
+            <template v-for="(h, i) in overloaded.slice(0, 8)" :key="h.hour">{{ i ? $t('common.listSep') : '' }}{{ shortTime(h.hour) }}{{ $t('common.paren', { s: goDuration(h.total) }) }}</template>
+            <template v-if="overloaded.length > 8">{{ $t('common.etc') }}</template>
+          </span>
+          <b v-else class="ok">{{ $t('schedule.noOverload') }}</b>
+        </div>
       </div>
-      <p class="muted note">
-        预测使用与 agent 相同的排班与串行执行规则，耗时取近 14 天成功任务的平均值；实际执行画在每个项目的预测下方。调整偏移量请到“项目”页面编辑（可使用推荐偏移量）。
-      </p>
-      <GanttChart v-if="schedule" :schedule="schedule" :projects="rows" />
-    </el-card>
+      <div class="bk-panel__body">
+        <GanttChart v-if="schedule" :schedule="schedule" :projects="rows" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -104,14 +109,25 @@ const queued = computed(() => {
 .summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 8px;
+  border-bottom: 1px solid var(--bk-border);
+}
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px var(--bk-panel-padding);
+  border-right: 1px solid var(--bk-border);
+}
+.metric .section-label {
+  margin: 0;
+}
+.metric.wide {
+  flex: 1;
+  min-width: 240px;
+  border-right: none;
 }
 .ok {
   color: var(--el-color-success);
 }
-.note {
-  font-size: 12px;
-  margin: 0 0 12px;
-}
+
 </style>

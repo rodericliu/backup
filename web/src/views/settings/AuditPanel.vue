@@ -4,34 +4,37 @@ import { ElMessage } from 'element-plus'
 import { api, errorMessage } from '@/api'
 import { datetime } from '@/format'
 import type { AuditLog, List } from '@/types'
+import { keyed } from '@/i18n'
 
 // Audit log (PRD U-5).
-const actionText: Record<string, string> = {
-  login: '登录',
-  login_failed: '登录失败',
-  login_blocked: '登录被限流',
-  logout: '登出',
-  change_password: '修改密码',
-  user_create: '新增用户',
-  user_disable: '禁用用户',
-  user_enable: '启用用户',
-  user_reset_password: '重置密码',
-  register_token_create: '生成注册 token',
-  register_token_delete: '删除注册 token',
-  host_register: '主机注册',
-  host_revoke: '吊销主机',
-  host_pause: '暂停调度',
-  host_resume: '恢复调度',
-  project_create: '新增项目',
-  project_update: '修改项目',
-  project_enable: '启用项目',
-  project_disable: '停用项目',
-  project_delete: '删除项目',
-  project_purge: '删除备份文件',
-  job_run: '立即执行',
-  job_cancel: '取消任务',
-}
-const targetText: Record<string, string> = { user: '用户', host: '主机', project: '项目', job: '任务', register_token: '注册 token' }
+const actions = [
+  'login',
+  'login_failed',
+  'login_blocked',
+  'logout',
+  'change_password',
+  'user_create',
+  'user_disable',
+  'user_enable',
+  'user_reset_password',
+  'register_token_create',
+  'register_token_delete',
+  'host_register',
+  'host_revoke',
+  'host_pause',
+  'host_resume',
+  'project_create',
+  'project_update',
+  'project_enable',
+  'project_disable',
+  'project_delete',
+  'project_purge',
+  'job_run',
+  'job_cancel',
+]
+const actionText = keyed('audit.actions')
+const targets = ['user', 'host', 'project', 'job', 'register_token']
+const targetText = keyed('audit.targets')
 
 const filter = reactive({ username: '', action: '', target_type: '', range: null as [Date, Date] | null })
 const page = ref(1)
@@ -78,32 +81,39 @@ function detail(d: Record<string, unknown>) {
 </script>
 
 <template>
-  <div>
+  <div class="bk-panel">
     <div class="toolbar">
-      <el-input v-model="filter.username" placeholder="用户名" clearable style="width: 160px" @change="load" />
-      <el-select v-model="filter.action" clearable filterable placeholder="全部操作" style="width: 180px">
-        <el-option v-for="(t, a) in actionText" :key="a" :label="t" :value="a" />
+      <el-input v-model="filter.username" :placeholder="$t('login.username')" clearable style="width: 160px" @change="load" />
+      <el-select v-model="filter.action" clearable filterable :placeholder="$t('audit.allActions')" style="width: 200px">
+        <el-option v-for="a in actions" :key="a" :label="actionText[a]" :value="a" />
       </el-select>
-      <el-select v-model="filter.target_type" clearable placeholder="全部对象" style="width: 140px">
-        <el-option v-for="(t, k) in targetText" :key="k" :label="t" :value="k" />
+      <el-select v-model="filter.target_type" clearable :placeholder="$t('audit.allTargets')" style="width: 160px">
+        <el-option v-for="k in targets" :key="k" :label="targetText[k]" :value="k" />
       </el-select>
-      <el-date-picker v-model="filter.range" type="datetimerange" range-separator="至" start-placeholder="开始" end-placeholder="结束" style="width: 360px" />
+      <el-date-picker
+        v-model="filter.range"
+        type="datetimerange"
+        :range-separator="$t('jobs.rangeTo')"
+        :start-placeholder="$t('audit.start')"
+        :end-placeholder="$t('audit.end')"
+        style="width: 360px"
+      />
     </div>
     <el-table v-loading="loading" :data="logs" size="small">
-      <el-table-column label="时间" width="170"><template #default="{ row }">{{ datetime(row.created_at) }}</template></el-table-column>
-      <el-table-column label="用户" width="120">
+      <el-table-column :label="$t('dashboard.time')" width="185"><template #default="{ row }"><span class="bk-num">{{ datetime(row.created_at) }}</span></template></el-table-column>
+      <el-table-column :label="$t('audit.user')" width="120">
         <template #default="{ row }">{{ row.username || (row.action === 'host_register' || row.action === 'project_purge' ? 'agent' : '-') }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="130">
+      <el-table-column :label="$t('audit.action')" width="170">
         <template #default="{ row }">
           <el-tag :type="row.action.includes('fail') || row.action.includes('blocked') ? 'danger' : 'info'" size="small">{{ actionText[row.action] ?? row.action }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="对象" width="150">
+      <el-table-column :label="$t('audit.target')" width="170">
         <template #default="{ row }">{{ targetText[row.target_type] ?? row.target_type }} <span class="mono">{{ row.target_id }}</span></template>
       </el-table-column>
-      <el-table-column label="详情" min-width="300"><template #default="{ row }"><span class="mono">{{ detail(row.detail) }}</span></template></el-table-column>
-      <el-table-column prop="ip" label="IP" width="130" />
+      <el-table-column :label="$t('audit.detail')" min-width="300"><template #default="{ row }"><span class="mono">{{ detail(row.detail) }}</span></template></el-table-column>
+      <el-table-column label="IP" width="130"><template #default="{ row }"><span class="bk-data">{{ row.ip }}</span></template></el-table-column>
     </el-table>
     <el-pagination
       v-model:current-page="page"
@@ -118,7 +128,8 @@ function detail(d: Record<string, unknown>) {
 
 <style scoped>
 .pager {
-  margin-top: 12px;
   justify-content: flex-end;
+  padding: 12px var(--bk-panel-padding);
+  border-top: 1px solid var(--bk-border);
 }
 </style>

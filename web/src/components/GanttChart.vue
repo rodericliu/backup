@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { BarChart, CustomChart } from 'echarts/charts'
 import { DataZoomComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from 'echarts/components'
@@ -7,6 +7,8 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { CustomSeriesRenderItemAPI, CustomSeriesRenderItemParams, CustomSeriesRenderItemReturn } from 'echarts'
 import { datetime, duration, goDuration, parseDuration, statusText, typeText } from '@/format'
 import type { Job, Schedule } from '@/types'
+import { chartColors } from '@/theme'
+import { locale, t } from '@/i18n'
 
 echarts.use([CustomChart, BarChart, GridComponent, TooltipComponent, DataZoomComponent, MarkLineComponent, MarkAreaComponent, CanvasRenderer])
 
@@ -18,35 +20,38 @@ const props = defineProps<{ schedule: Schedule; projects: string[] }>()
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 
-const typeColor = { full: '#1d4f91', incr: '#79a6e0' }
-const statusColor: Record<string, string> = {
-  success: '#67c23a',
-  warning: '#e6a23c',
-  failed: '#f56c6c',
-  canceled: '#909399',
-  skipped: '#c0c4cc',
-  running: '#409eff',
-  pending: '#c0c4cc',
-}
+const c = chartColors
+const typeColor = computed(() => ({ full: c.value.full, incr: c.value.incr }))
+const statusColor = computed<Record<string, string>>(() => ({
+  success: c.value.success,
+  warning: c.value.warning,
+  failed: c.value.failed,
+  canceled: c.value.muted,
+  skipped: c.value.faint,
+  running: c.value.running,
+  pending: c.value.faint,
+}))
 
-const t = (s?: string) => (s ? new Date(s).getTime() : NaN)
+const ms = (s?: string) => (s ? new Date(s).getTime() : NaN)
 
 function render() {
   if (!chart) return
+  const col = c.value
+  const axis = { axisLabel: { color: col.text, hideOverlap: true }, axisLine: { lineStyle: { color: col.grid } }, axisTick: { lineStyle: { color: col.grid } } }
   const s = props.schedule
   const rows = [...props.projects]
   for (const r of [...s.runs.map((r) => r.project), ...s.actual.map((j) => j.project)]) if (!rows.includes(r)) rows.push(r)
   const idx = (p: string) => rows.indexOf(p)
-  const from = t(s.from)
-  const to = t(s.to)
+  const from = ms(s.from)
+  const to = ms(s.to)
 
   // [row, start, end, kind, index]
   const predicted = s.runs
-    .map((r, i) => (r.superseded ? [idx(r.project), t(r.at), t(r.at), 'superseded', i] : [idx(r.project), t(r.start), t(r.end), r.type, i]))
+    .map((r, i) => (r.superseded ? [idx(r.project), ms(r.at), ms(r.at), 'superseded', i] : [idx(r.project), ms(r.start), ms(r.end), r.type, i]))
   const actual = s.actual
     .filter((j) => j.started_at)
-    .map((j, i) => [idx(j.project), t(j.started_at), j.finished_at ? t(j.finished_at) : Date.now(), j.status, i])
-  const planned = s.runs.map((r, i) => [idx(r.project), t(r.at), i])
+    .map((j, i) => [idx(j.project), ms(j.started_at), j.finished_at ? ms(j.finished_at) : Date.now(), j.status, i])
+  const planned = s.runs.map((r, i) => [idx(r.project), ms(r.at), i])
 
   const renderBar =
     (lane: 'top' | 'bottom') =>
@@ -60,7 +65,7 @@ function render() {
       if (kind === 'superseded') {
         return {
           type: 'text',
-          style: { x: start[0], y: start[1] - h * 0.18, text: '×', fill: '#909399', font: 'bold 12px sans-serif', align: 'center', verticalAlign: 'middle' },
+          style: { x: start[0], y: start[1] - h * 0.18, text: '×', fill: col.muted, font: 'bold 12px sans-serif', align: 'center', verticalAlign: 'middle' },
         }
       }
       const y = lane === 'top' ? start[1] - h * 0.38 : start[1] + h * 0.06
@@ -70,13 +75,13 @@ function render() {
         { x: coordSys.x, y: coordSys.y, width: coordSys.width, height: coordSys.height },
       )
       if (!shape) return null as unknown as CustomSeriesRenderItemReturn
-      const fill = lane === 'top' ? typeColor[kind as 'full' | 'incr'] : (statusColor[kind] ?? '#909399')
-      return { type: 'rect', shape, style: { fill, stroke: lane === 'top' ? '#fff' : undefined, lineWidth: 0.5 } }
+      const fill = lane === 'top' ? typeColor.value[kind as 'full' | 'incr'] : (statusColor.value[kind] ?? col.muted)
+      return { type: 'rect', shape: { ...shape, r: 2 }, style: { fill, stroke: lane === 'top' ? col.surface : undefined, lineWidth: 0.5 } }
     }
 
   const hours = s.hours.map((h) => ({
-    value: [t(h.hour) + 1800_000, parseDuration(h.total) / 60],
-    itemStyle: { color: h.overloaded ? '#f56c6c' : '#91b5e8' },
+    value: [ms(h.hour) + 1800_000, parseDuration(h.total) / 60],
+    itemStyle: { color: h.overloaded ? col.failed : col.load, borderRadius: [2, 2, 0, 0] },
     hour: h,
   }))
 
@@ -86,20 +91,23 @@ function render() {
       tooltip: {
         trigger: 'item',
         confine: true,
+        backgroundColor: col.surface,
+        borderColor: col.grid,
+        textStyle: { color: col.now, fontSize: 12 },
         formatter: (p: { seriesId: string; data: unknown }) => {
           const d = p.data as number[] | { hour: { hour: string; total: string; overloaded: boolean } }
           if (p.seriesId === 'load') {
             const h = (d as { hour: { hour: string; total: string; overloaded: boolean } }).hour
-            return `${datetime(h.hour)} 起一小时<br/>计划工作量 ${goDuration(h.total)}${h.overloaded ? '<br/><b style="color:#f56c6c">超负荷（> 60 分钟）</b>' : ''}`
+            return `${t('gantt.hourFrom', { time: datetime(h.hour) })}<br/>${t('gantt.plannedWork', { d: goDuration(h.total) })}${h.overloaded ? `<br/><b style="color:${col.failed}">${t('gantt.overloaded')}</b>` : ''}`
           }
           if (p.seriesId === 'actual') {
             const j = s.actual.filter((j) => j.started_at)[(d as number[])[4]] as Job
-            return `<b>${j.project}</b> ${typeText[j.type]}（实际）<br/>状态 ${statusText[j.status]}<br/>开始 ${datetime(j.started_at)}<br/>结束 ${datetime(j.finished_at)}`
+            return `<b>${j.project}</b> ${t('gantt.actual', { type: typeText[j.type] })}<br/>${t('gantt.status', { s: statusText[j.status] })}<br/>${t('gantt.started', { time: datetime(j.started_at) })}<br/>${t('gantt.finished', { time: datetime(j.finished_at) })}`
           }
           const r = s.runs[(d as number[])[p.seriesId === 'planned' ? 2 : 4]]
-          if (r.superseded) return `<b>${r.project}</b> ${typeText[r.type]}<br/>计划 ${datetime(r.at)}<br/>被后一个同类计划覆盖（跳过）`
-          const wait = (t(r.start) - t(r.at)) / 1000
-          return `<b>${r.project}</b> ${typeText[r.type]}（预测）<br/>计划 ${datetime(r.at)}<br/>预计开始 ${datetime(r.start)}${wait > 0 ? `（排队 ${duration(wait)}）` : ''}<br/>预计结束 ${datetime(r.end)}<br/>预计耗时 ${goDuration(r.estimate)}`
+          if (r.superseded) return `<b>${r.project}</b> ${typeText[r.type]}<br/>${t('gantt.planned', { time: datetime(r.at) })}<br/>${t('gantt.superseded')}`
+          const wait = (ms(r.start) - ms(r.at)) / 1000
+          return `<b>${r.project}</b> ${t('gantt.predicted', { type: typeText[r.type] })}<br/>${t('gantt.planned', { time: datetime(r.at) })}<br/>${t('gantt.expectedStart', { time: datetime(r.start) })}${wait > 0 ? t('gantt.queued', { d: duration(wait) }) : ''}<br/>${t('gantt.expectedEnd', { time: datetime(r.end) })}<br/>${t('gantt.expectedDuration', { d: goDuration(r.estimate) })}`
         },
       },
       grid: [
@@ -107,15 +115,15 @@ function render() {
         { left: 120, right: 30, top: Math.max(rows.length * 42, 120) + 54, height: 120 },
       ],
       xAxis: [
-        { type: 'time', min: from, max: to, gridIndex: 0, axisLabel: { hideOverlap: true }, splitLine: { show: true, lineStyle: { color: '#eee' } } },
-        { type: 'time', min: from, max: to, gridIndex: 1, axisLabel: { hideOverlap: true } },
+        { type: 'time', min: from, max: to, gridIndex: 0, ...axis, splitLine: { show: true, lineStyle: { color: col.grid } } },
+        { type: 'time', min: from, max: to, gridIndex: 1, ...axis },
       ],
       yAxis: [
-        { type: 'category', data: rows, inverse: true, gridIndex: 0, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: '#f2f2f2' } } },
-        { type: 'value', gridIndex: 1, name: '分钟', max: (v: { max: number }) => Math.max(75, Math.ceil(v.max / 15) * 15) },
+        { type: 'category', data: rows, inverse: true, gridIndex: 0, ...axis, axisLabel: { color: col.now }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: col.gridFaint } } },
+        { type: 'value', gridIndex: 1, name: t('gantt.minutes'), nameTextStyle: { color: col.text }, ...axis, splitLine: { lineStyle: { color: col.gridFaint } }, max: (v: { max: number }) => Math.max(75, Math.ceil(v.max / 15) * 15) },
       ],
       dataZoom: [
-        { type: 'slider', xAxisIndex: [0, 1], bottom: 4, height: 18 },
+        { type: 'slider', xAxisIndex: [0, 1], bottom: 4, height: 18, borderColor: col.grid, fillerColor: 'rgba(132, 144, 247, 0.15)', textStyle: { color: col.text }, dataBackground: { lineStyle: { color: col.grid }, areaStyle: { color: col.gridFaint } } },
         { type: 'inside', xAxisIndex: [0, 1] },
       ],
       series: [
@@ -131,7 +139,7 @@ function render() {
           markLine: {
             silent: true,
             symbol: 'none',
-            lineStyle: { color: '#e6a23c', type: 'dashed' },
+            lineStyle: { color: col.warning, type: 'dashed' },
             label: { show: false },
             data: Date.now() > from && Date.now() < to ? [{ xAxis: Date.now() }] : [],
           },
@@ -140,9 +148,9 @@ function render() {
           id: 'planned',
           type: 'custom',
           renderItem: (_p: CustomSeriesRenderItemParams, api: CustomSeriesRenderItemAPI) => {
-            const c = api.coord([api.value(1), api.value(0)])
+            const p = api.coord([api.value(1), api.value(0)])
             const h = (api.size!([0, 1]) as number[])[1]
-            return { type: 'line', shape: { x1: c[0], y1: c[1] - h * 0.42, x2: c[0], y2: c[1] - h * 0.02 }, style: { stroke: '#303133', lineWidth: 1 } }
+            return { type: 'line', shape: { x1: p[0], y1: p[1] - h * 0.42, x2: p[0], y2: p[1] - h * 0.02 }, style: { stroke: col.now, lineWidth: 1 } }
           },
           encode: { x: 1, y: 0 },
           data: planned,
@@ -160,8 +168,8 @@ function render() {
           markLine: {
             silent: true,
             symbol: 'none',
-            lineStyle: { color: '#f56c6c' },
-            label: { formatter: '60 分钟', position: 'insideEndTop' },
+            lineStyle: { color: col.failed },
+            label: { formatter: t('gantt.sixtyMinutes'), position: 'insideEndTop', color: col.failed },
             data: [{ yAxis: 60 }],
           },
         },
@@ -184,19 +192,19 @@ onBeforeUnmount(() => {
   chart?.dispose()
   chart = null
 })
-watch(() => [props.schedule, props.projects], render)
+watch(() => [props.schedule, props.projects, c.value, locale.value], render)
 </script>
 
 <template>
   <div class="legend">
-    <span><i :style="{ background: typeColor.full }" />预测：全量</span>
-    <span><i :style="{ background: typeColor.incr }" />预测：增量</span>
-    <span><i class="tick" />计划时间</span>
-    <span><b class="cross">×</b>被覆盖（跳过）</span>
-    <span><i class="now" />当前时间</span>
-    <span>实际执行：</span>
+    <span><i :style="{ background: typeColor.full }" />{{ $t('gantt.legendFull') }}</span>
+    <span><i :style="{ background: typeColor.incr }" />{{ $t('gantt.legendIncr') }}</span>
+    <span><i class="tick" />{{ $t('gantt.legendPlanned') }}</span>
+    <span><b class="cross">×</b>{{ $t('gantt.legendSuperseded') }}</span>
+    <span><i class="now" />{{ $t('gantt.legendNow') }}</span>
+    <span>{{ $t('gantt.legendActual') }}</span>
     <span v-for="k in ['success', 'warning', 'failed', 'running', 'canceled']" :key="k"><i :style="{ background: statusColor[k] }" />{{ statusText[k] }}</span>
-    <span><i style="background: #f56c6c" />超负荷小时（计划工作量 &gt; 60 分钟）</span>
+    <span><i :style="{ background: c.failed }" />{{ $t('gantt.legendOverloaded') }}</span>
   </div>
   <div ref="el" class="gantt" />
 </template>
@@ -207,28 +215,29 @@ watch(() => [props.schedule, props.projects], render)
   flex-wrap: wrap;
   gap: 14px;
   font-size: 12px;
-  color: var(--el-text-color-regular);
-  margin-bottom: 8px;
+  color: var(--bk-secondary);
+  margin-bottom: 12px;
 }
 .legend i {
   display: inline-block;
   width: 12px;
   height: 10px;
-  margin-right: 4px;
+  margin-right: 6px;
+  border-radius: 2px;
   vertical-align: -1px;
 }
 .legend i.tick {
   width: 1px;
   height: 12px;
-  background: #303133;
+  background: var(--bk-on-surface);
 }
 .legend i.now {
   width: 0;
   height: 12px;
-  border-left: 1px dashed #e6a23c;
+  border-left: 1px dashed var(--el-color-warning);
 }
 .cross {
-  color: #909399;
+  color: var(--bk-secondary);
   margin-right: 4px;
 }
 .gantt {

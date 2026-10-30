@@ -245,7 +245,9 @@ export interface RestorePoint {
 export interface RestoreGuide {
   target: Job
   sequence: Job[]
+  environment: RestoreEnv
   steps: { title: string; commands: string }[]
+  notes: string[]
 }
 
 export interface PredictedRun {
@@ -319,4 +321,68 @@ export interface AuditLog {
   detail: Record<string, unknown>
   ip: string
   created_at: string
+}
+
+export interface RestoreEnv {
+  host: string
+  backup_root?: string
+  container?: string
+  image?: string
+  data_dir?: string
+  dir: string
+}
+
+export interface AssistantInfo {
+  enabled: boolean
+  models: string[]
+}
+
+export interface AssistantSession {
+  id: number
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AssistantToolCall {
+  id: string
+  name: string
+  arguments: string
+  result: string
+  error?: boolean
+  // pending is set while the tool runs.
+  pending?: boolean
+}
+
+export interface AssistantMessage {
+  id: number
+  session_id: number
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  tool_calls: AssistantToolCall[]
+  model?: string
+  error?: string
+  input_tokens?: number
+  output_tokens?: number
+  created_at: string
+}
+
+export interface AssistantSessionDetail extends AssistantSession {
+  messages: AssistantMessage[]
+}
+
+export interface ChatContext {
+  job_id?: string
+  host_id?: number
+  project_id?: number
+}
+
+export interface ChatEvent {
+  type: 'user_message' | 'content' | 'reasoning' | 'tool_call' | 'tool_result' | 'error' | 'done'
+  content?: string
+  tool_call?: { id: string; name: string; arguments: string }
+  tool_result?: { id: string; name: string; content: string; error?: boolean }
+  message?: AssistantMessage
+  error?: string
 }

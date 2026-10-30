@@ -1,5 +1,7 @@
 // Formatting helpers. Times are shown in the browser's time zone (PRD 9).
 
+import { keyed, t } from '@/i18n'
+
 const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
 export function bytes(n?: number | null): string {
@@ -32,14 +34,14 @@ export function shortTime(s?: string | null): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// ago describes how long ago s was, for example "3 分钟前".
+// ago describes how long ago s was, for example "3 minutes ago".
 export function ago(s?: string | null, now = Date.now()): string {
   if (!s) return '-'
   const sec = Math.round((now - new Date(s).getTime()) / 1000)
-  if (sec < 60) return `${Math.max(sec, 0)} 秒前`
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`
-  return `${Math.floor(sec / 86400)} 天前`
+  if (sec < 60) return t('ago.seconds', { n: Math.max(sec, 0) })
+  if (sec < 3600) return t('ago.minutes', { n: Math.floor(sec / 60) })
+  if (sec < 86400) return t('ago.hours', { n: Math.floor(sec / 3600) })
+  return t('ago.days', { n: Math.floor(sec / 86400) })
 }
 
 // parseDuration converts a Go duration string to seconds.
@@ -77,15 +79,7 @@ export function jobDuration(started?: string, finished?: string): string {
   return duration((new Date(finished).getTime() - new Date(started).getTime()) / 1000)
 }
 
-export const statusText: Record<string, string> = {
-  pending: '排队中',
-  running: '运行中',
-  success: '成功',
-  warning: '警告',
-  failed: '失败',
-  skipped: '跳过',
-  canceled: '已取消',
-}
+export const statusText = keyed('status')
 
 export const statusTag: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'primary'> = {
   pending: 'info',
@@ -97,16 +91,13 @@ export const statusTag: Record<string, 'success' | 'warning' | 'danger' | 'info'
   canceled: 'info',
 }
 
-export const typeText: Record<string, string> = { full: '全量', incr: '增量' }
+export const typeText = keyed('jobType')
 
-export const triggerText: Record<string, string> = { schedule: '计划', manual: '手动', retry: '重试' }
+export const triggerText = keyed('trigger')
 
-export const hostStatusText: Record<string, string> = {
-  online: '在线',
-  offline: '离线',
-  never: '未连接',
-  revoked: '已吊销',
-}
+export const hostStatusText = keyed('hostStatus')
+
+export const chainStatusText = keyed('chainStatus')
 
 export const hostStatusTag: Record<string, 'success' | 'danger' | 'info' | 'warning'> = {
   online: 'success',
@@ -116,17 +107,4 @@ export const hostStatusTag: Record<string, 'success' | 'danger' | 'info' | 'warn
 }
 
 // Failure reason codes (PRD 6.4.5).
-export const errorCodeText: Record<string, string> = {
-  CONTAINER_NOT_RUNNING: '容器未运行',
-  REPLICATION_BROKEN: '复制中断',
-  REPLICATION_LAG: '复制延迟超阈值',
-  DISK_INSUFFICIENT: '磁盘空间不足',
-  MYSQL_AUTH_FAILED: 'MySQL 认证失败',
-  XTRABACKUP_ERROR: 'xtrabackup 失败',
-  COMPRESS_ERROR: '压缩或写文件失败',
-  TIMEOUT: '超时',
-  NO_BASE: '无可用基准',
-  INTERRUPTED: '中断',
-  CANCELED: '已取消',
-  SUPERSEDED: '被新任务覆盖',
-}
+export const errorCodeText = keyed('errorCode')

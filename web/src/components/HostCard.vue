@@ -17,83 +17,109 @@ const more = computed(() => (props.host.state?.queue?.length ?? 0) - queue.value
 </script>
 
 <template>
-  <el-card shadow="hover" class="host-card" :class="{ offline }">
-    <template #header>
-      <div class="head">
+  <article class="bk-panel host-card" :class="{ offline }">
+    <header class="head">
+      <div class="title-row">
         <router-link :to="{ name: 'hosts', query: { id: host.id } }" class="name">{{ host.name }}</router-link>
         <HostStatus :status="host.status" :paused="host.paused" :compatible="host.compatible" />
       </div>
-      <div class="sub muted">
-        {{ host.ip || '-' }} · agent {{ host.agent_version || '-' }} · 心跳 {{ ago(host.last_heartbeat_at) }}
+      <div class="sub">
+        <span class="bk-data">{{ host.ip || '-' }}</span>
+        <span class="dot" />agent <span class="bk-data">{{ host.agent_version || '-' }}</span>
+        <span class="dot" />{{ $t('hostCard.heartbeat', { ago: ago(host.last_heartbeat_at) }) }}
       </div>
-    </template>
+    </header>
 
-    <div class="section">
-      <div class="section-title">{{ offline && current ? '离线前最后已知' : '当前任务' }}</div>
-      <div v-if="current" class="current" :class="{ stale: offline }">
-        <div>
-          <b>{{ current.project }}</b> {{ typeText[current.type] }}备份
-          <span class="muted">（计划 {{ shortTime(current.scheduled_at) }}）</span>
+    <div class="body">
+      <div class="section">
+        <div class="section-label">{{ offline && current ? $t('hostCard.lastKnown') : $t('hostCard.current') }}</div>
+        <div v-if="current" class="current" :class="{ stale: offline }">
+          <div>
+            <b>{{ current.project }}</b> {{ $t('common.typeBackup', { type: typeText[current.type] }) }}
+            <span class="muted">{{ $t('hostCard.scheduledAt', { time: shortTime(current.scheduled_at) }) }}</span>
+          </div>
+          <div v-if="progress" class="progress">
+            {{ $t('progress.written') }} <b class="bk-num">{{ bytes(progress.compressed_bytes) }}</b>
+            <span class="dot" />{{ rate(progress.bytes_per_second) }}
+            <span class="dot" />{{ $t('progress.elapsed', { d: goDuration(progress.elapsed) }) }}
+          </div>
         </div>
-        <div v-if="progress" class="progress">
-          已写入 <b>{{ bytes(progress.compressed_bytes) }}</b> · {{ rate(progress.bytes_per_second) }} · 已耗时
-          {{ goDuration(progress.elapsed) }}
+        <div v-else class="muted">{{ $t('hostCard.idle') }}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">{{ $t('hostCard.queue') }}</div>
+        <div v-if="queue.length" class="queue">
+          <el-tag v-for="j in queue" :key="j.id" size="small" type="info" disable-transitions>
+            <span class="bk-num">{{ shortTime(j.scheduled_at) }}</span> {{ j.project }} {{ typeText[j.type] }}
+          </el-tag>
+          <span v-if="more > 0" class="muted">{{ $t('hostCard.more', { n: more }) }}</span>
         </div>
+        <div v-else class="muted">{{ $t('common.none') }}</div>
       </div>
-      <div v-else class="muted">空闲</div>
-    </div>
 
-    <div class="section">
-      <div class="section-title">队列</div>
-      <div v-if="queue.length" class="queue">
-        <el-tag v-for="j in queue" :key="j.id" size="small" type="info" disable-transitions>
-          {{ shortTime(j.scheduled_at) }} {{ j.project }} {{ typeText[j.type] }}
-        </el-tag>
-        <span v-if="more > 0" class="muted">等 {{ more }} 个</span>
+      <div v-if="host.metrics?.disks?.length" class="section">
+        <div class="section-label">{{ $t('hostCard.disks') }}</div>
+        <DiskBar v-for="d in host.metrics.disks" :key="d.path" :disk="d" />
       </div>
-      <div v-else class="muted">无</div>
     </div>
-
-    <div v-if="host.metrics?.disks?.length" class="section">
-      <div class="section-title">磁盘</div>
-      <DiskBar v-for="d in host.metrics.disks" :key="d.path" :disk="d" />
-    </div>
-  </el-card>
+  </article>
 </template>
 
 <style scoped>
+.host-card {
+  display: flex;
+  flex-direction: column;
+  transition: border-color var(--bk-motion);
+}
+.host-card:hover {
+  border-color: rgba(var(--bk-primary-rgb), 0.4);
+}
 .head {
+  padding: 16px var(--bk-panel-padding) 14px;
+  border-block-end: 1px solid var(--bk-border);
+}
+.offline .head {
+  background: var(--el-color-danger-light-9);
+}
+.title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 .name {
   font-weight: 600;
-  font-size: 16px;
-  color: inherit;
-  text-decoration: none;
+  font-size: 1rem;
+  color: var(--bk-on-surface);
 }
 .sub {
-  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   margin-top: 4px;
+  color: var(--bk-secondary);
+  font-size: 12px;
 }
-.offline :deep(.el-card__header) {
-  background: var(--el-color-danger-light-9);
+.dot::before {
+  content: '·';
+  margin-inline: 6px;
+}
+.body {
+  padding: 14px var(--bk-panel-padding) 6px;
 }
 .section {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
-.section-title {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
+.section-label {
+  margin-bottom: 6px;
 }
 .current .progress {
   margin-top: 4px;
   font-size: 13px;
 }
 .current.stale {
-  color: var(--el-text-color-secondary);
+  color: var(--bk-secondary);
 }
 .queue {
   display: flex;
