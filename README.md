@@ -77,6 +77,25 @@ systemctl daemon-reload && systemctl enable --now backup-server
 - `ca.crt` 分发给每个 agent（`server_ca`），`ca.key` 不要离开 CA 目录
 - 数据库密码也可以通过环境变量 `BACKUP_DB_PASSWORD` 提供
 
+### AI 助手
+
+Web 右上角的“助手”可以用自然语言询问备份情况，例如“今天 backup-esh-01 上 fetisch 的备份情况如何”“总结下本周的备份情况”“这个备份在服务器上哪个目录”“恢复这个备份要怎么做、需要改哪些地方”。它通过 OpenAI Responses API 调用模型，模型再调用服务端的工具查询主机、项目、任务、备份统计和恢复方案后回答。
+
+- **只读**：工具只查询数据，助手不能触发或取消备份、修改配置或在服务器上执行命令
+- 会话保存在 PostgreSQL（`assistant_sessions`、`assistant_messages`），每个用户只能看到自己的会话；每次提问记入审计日志（`assistant_chat`）
+- 请求使用 `store: false`，对话历史由平台保存并在每次提问时发给模型。问题、主机名、路径和工具查询结果会发送给 OpenAI；工具结果不包含 MySQL 密码，主机上报的错误信息和日志末尾会先屏蔽其中的密码和 token
+
+启用：
+
+```bash
+install -m 600 -o backup-server /dev/null /etc/backup-server/openai.key
+echo 'sk-...' > /etc/backup-server/openai.key      # 或设置环境变量 BACKUP_OPENAI_API_KEY
+# server.yaml: assistant.enabled: true，按需修改 models
+systemctl restart backup-server
+```
+
+需要 backup-server 能访问 `assistant.base_url`（默认 `https://api.openai.com/v1`），走代理时设置 `HTTPS_PROXY`。
+
 ## 开发
 
 需要 Go 1.27+ 和 zstd（测试中假的 podman 直接在本机执行容器内命令）。

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rodericliu/backup/internal/crypto"
+	"github.com/rodericliu/backup/internal/server/assistant"
 	"github.com/rodericliu/backup/internal/server/config"
 	"github.com/rodericliu/backup/internal/store"
 	"github.com/rodericliu/backup/internal/version"
@@ -55,6 +56,12 @@ type Server struct {
 	limiter loginLimiter
 	hub     hub
 	events  broker
+
+	// ai is nil when the assistant is disabled.
+	ai *assistant.Client
+	// aiBusy holds the sessions generating an answer.
+	aiBusy  sync.Map
+	aiSlots chan struct{}
 }
 
 type task struct {
@@ -81,6 +88,9 @@ func New(opts Options) *Server {
 		now:    opts.Now,
 		web:    http.NewServeMux(),
 		agent:  http.NewServeMux(),
+
+		ai:      newAssistant(&opts.Config.Assistant),
+		aiSlots: make(chan struct{}, maxConcurrentAnswers),
 	}
 	s.routes()
 	s.web.Handle("GET /", s.uiHandler(opts.UI))
@@ -135,6 +145,14 @@ func (s *Server) routes() {
 	s.webAPI("GET /schedule", s.hostSchedule)
 	s.webAPI("GET /dashboard", s.dashboard)
 	s.webAPI("GET /events/stream", s.eventStream)
+
+	s.webAPI("GET /assistant/config", s.assistantInfo)
+	s.webAPI("GET /assistant/sessions", s.listAssistantSessions)
+	s.webAPI("POST /assistant/sessions", s.createAssistantSession)
+	s.webAPI("GET /assistant/sessions/{id}", s.getAssistantSession)
+	s.webAPI("PATCH /assistant/sessions/{id}", s.renameAssistantSession)
+	s.webAPI("DELETE /assistant/sessions/{id}", s.deleteAssistantSession)
+	s.webAPI("POST /assistant/sessions/{id}/messages", s.assistantChat)
 
 	s.agentAPI("POST /register", s.register)
 	s.agentAPI("POST /heartbeat", s.requireAgent(s.heartbeat))

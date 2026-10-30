@@ -144,6 +144,43 @@ func (s *Store) Stats(ctx context.Context, from, to time.Time) (*JobStats, error
 	return &st, dbError(err, "job stats")
 }
 
+// JobCount counts the jobs of one project, type and status.
+type JobCount struct {
+	HostID    int64
+	ProjectID int64
+	Project   string
+	Type      api.JobType
+	Status    api.JobStatus
+	Count     int
+	// Bytes is the total compressed size.
+	Bytes int64
+	// AvgDuration is the mean run time of the jobs that finished.
+	AvgDuration time.Duration
+}
+
+// JobCounts groups the jobs matching f (its page is ignored) by host,
+// project, type and status.
+func (s *Store) JobCounts(ctx context.Context, f JobFilter) ([]JobCount, error) {
+	w := f.where()
+	rows, err := s.pool.Query(ctx, `SELECT host_id, coalesce(project_id, 0), project, type, status, count(*),
+			coalesce(sum(compressed_size), 0)::bigint,
+			coalesce(avg(extract(epoch FROM finished_at - started_at)) FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0)
+		FROM jobs`+w.String()+" GROUP BY 1, 2, 3, 4, 5 ORDER BY 3, 1, 4, 5", w.args...)
+	if err != nil {
+		return nil, dbError(err, "count jobs")
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (JobCount, error) {
+		var (
+			c   JobCount
+			avg float64
+		)
+		err := row.Scan(&c.HostID, &c.ProjectID, &c.Project, &c.Type, &c.Status, &c.Count, &c.Bytes, &avg)
+		c.AvgDuration = time.Duration(avg * float64(time.Second))
+		return c, err
+	})
+	return out, dbError(err, "count jobs")
+}
+
 // LastSuccess is the newest successful backup of a project (PRD D-3).
 type LastSuccess struct {
 	ProjectID int64

@@ -28,6 +28,15 @@ agent:
 
 timezone: Local                 # must match the agents' timezone; used for schedule prediction
 
+assistant:                      # read-only AI assistant (OpenAI Responses API); questions and tool results are sent to OpenAI
+  enabled: false
+  base_url: https://api.openai.com/v1   # or a gateway/proxy speaking the same API; HTTPS_PROXY is honored
+  api_key_file: /etc/backup-server/openai.key   # chmod 600; or the environment variable BACKUP_OPENAI_API_KEY
+  models: [gpt-6.1-sol, gpt-6-luna]     # offered in the chat window; the first is the default
+  reasoning_effort: low         # empty keeps the model default
+  timeout: 3m                   # per model request
+  max_tool_rounds: 8            # model requests per answer
+
 log:
   level: info
   dir: /var/log/backup-server
