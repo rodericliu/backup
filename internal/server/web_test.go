@@ -232,6 +232,10 @@ func TestScheduleAndDashboard(t *testing.T) {
 	if len(sch.Runs) != 2*(6+18) || sch.Timezone != "UTC (UTC+00:00)" || !sch.To.Equal(from.Add(24*time.Hour)) {
 		t.Errorf("runs = %d, schedule = %+v", len(sch.Runs), sch.Hours)
 	}
+	var info ServerInfo
+	if code := do(t, admin, "GET", e.api("/info"), nil, &info); code != http.StatusOK || info.Timezone != "UTC" {
+		t.Errorf("info = %d %+v", code, info)
+	}
 	overloaded := 0
 	for _, h := range sch.Hours {
 		if h.Overloaded {

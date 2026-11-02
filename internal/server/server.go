@@ -105,6 +105,7 @@ func (s *Server) routes() {
 	s.webAPI("POST /auth/logout", s.logout)
 	s.webAPI("GET /auth/me", s.me)
 	s.webAPI("POST /auth/password", s.changePassword)
+	s.webAPI("GET /info", s.info)
 
 	s.webAPI("GET /users", s.listUsers)
 	s.webAPI("POST /users", s.createUser)

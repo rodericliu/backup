@@ -12,6 +12,7 @@ import JobStatus from '@/components/JobStatus.vue'
 import JobDrawer from '@/components/JobDrawer.vue'
 import RestoreGuide from '@/components/RestoreGuide.vue'
 import { t } from '@/i18n'
+import { fromLocal, startOfToday, toLocal } from '@/timezone'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,8 +45,8 @@ async function loadJobs() {
       project_id: filter.project_id,
       type: filter.type,
       status: filter.status.join(','),
-      from: filter.range?.[0]?.toISOString(),
-      to: filter.range?.[1]?.toISOString(),
+      from: filter.range ? fromLocal(filter.range[0]).toISOString() : undefined,
+      to: filter.range ? fromLocal(filter.range[1]).toISOString() : undefined,
       page: page.value,
       page_size: pageSize.value,
     })
@@ -71,11 +72,13 @@ watch([page, pageSize], loadJobs)
 const statusOptions = ['pending', 'running', 'success', 'warning', 'failed', 'skipped', 'canceled']
 const projectOptions = computed(() => projects.value.filter((p) => !filter.host_id || p.host_id === filter.host_id))
 const hostName = (id: number) => hosts.value.find((h) => h.id === id)?.name ?? id
+// The date picker works in the browser's time zone; its values hold the
+// display time zone's wall clock (see timezone.ts).
 const shortcuts = computed(() => [
-  { text: t('jobs.today'), value: () => [new Date(new Date().setHours(0, 0, 0, 0)), new Date()] },
-  { text: t('jobs.lastHours', { n: 24 }), value: () => [new Date(Date.now() - 86400_000), new Date()] },
-  { text: t('jobs.lastDays', { n: 7 }), value: () => [new Date(Date.now() - 7 * 86400_000), new Date()] },
-  { text: t('jobs.lastDays', { n: 30 }), value: () => [new Date(Date.now() - 30 * 86400_000), new Date()] },
+  { text: t('jobs.today'), value: () => [toLocal(startOfToday()), toLocal(Date.now())] },
+  { text: t('jobs.lastHours', { n: 24 }), value: () => [toLocal(Date.now() - 86400_000), toLocal(Date.now())] },
+  { text: t('jobs.lastDays', { n: 7 }), value: () => [toLocal(Date.now() - 7 * 86400_000), toLocal(Date.now())] },
+  { text: t('jobs.lastDays', { n: 30 }), value: () => [toLocal(Date.now() - 30 * 86400_000), toLocal(Date.now())] },
 ])
 
 // Live status of listed jobs (PRD D-5).

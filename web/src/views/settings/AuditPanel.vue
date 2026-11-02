@@ -5,6 +5,7 @@ import { api, errorMessage } from '@/api'
 import { datetime } from '@/format'
 import type { AuditLog, List } from '@/types'
 import { keyed } from '@/i18n'
+import { fromLocal } from '@/timezone'
 
 // Audit log (PRD U-5).
 const actions = [
@@ -50,8 +51,8 @@ async function load() {
       username: filter.username.trim(),
       action: filter.action,
       target_type: filter.target_type,
-      from: filter.range?.[0]?.toISOString(),
-      to: filter.range?.[1]?.toISOString(),
+      from: filter.range ? fromLocal(filter.range[0]).toISOString() : undefined,
+      to: filter.range ? fromLocal(filter.range[1]).toISOString() : undefined,
       page: page.value,
       page_size: pageSize.value,
     })

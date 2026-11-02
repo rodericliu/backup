@@ -427,7 +427,7 @@
 | 安全 | 见 6.7；备份目录权限 700；日志中不得出现密码 |
 | 可观测 | server 与 agent 输出结构化日志（JSON），按天轮转；提供 `/healthz` |
 | 兼容性 | Percona Server 5.6 / 5.7 + xtrabackup 2.4；podman 4.x；Ubuntu 24.04 |
-| 时间 | 所有主机须启用 NTP；数据库存储 UTC，前端按浏览器时区显示 |
+| 时间 | 所有主机须启用 NTP；数据库存储 UTC，前端按 `server.yaml` 的 `timezone`（与 agent 一致）显示，无法确定时区名时退回浏览器时区 |
 | 升级 | server 与 agent 可独立升级；API 版本不兼容时 agent 拒绝连接并在心跳中报告 |
 
 ---

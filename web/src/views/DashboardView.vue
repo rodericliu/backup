@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleClose, Coin, Monitor, Refresh, Remove, Warning, WarningFilled } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api'
 import { useEvents } from '@/composables/events'
-import { ago, bytes, datetime, errorCodeText, shortTime, typeText } from '@/format'
+import { ago, bytes, clock, datetime, errorCodeText, shortTime, typeText } from '@/format'
 import type { Dashboard, Progress } from '@/types'
 import HostCard from '@/components/HostCard.vue'
 import JobStatus from '@/components/JobStatus.vue'
@@ -88,7 +88,7 @@ const staleCount = computed(() => data.value?.projects.filter((p) => p.stale).le
   <div v-loading="loading && !data" class="bk-page">
     <PageHeader :title="$t('nav.dashboard')" :eyebrow="$t('nav.monitor')" :description="$t('dashboard.description')">
       <template #actions>
-        <span class="muted updated">{{ $t('dashboard.updatedAt', { time: lastUpdated ? lastUpdated.toLocaleTimeString() : '-' }) }}</span>
+        <span class="muted updated">{{ $t('dashboard.updatedAt', { time: lastUpdated ? clock(lastUpdated) : '-' }) }}</span>
         <el-button :icon="Refresh" :loading="loading" @click="load">{{ $t('common.refresh') }}</el-button>
       </template>
     </PageHeader>

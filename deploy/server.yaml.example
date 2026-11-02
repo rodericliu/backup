@@ -26,7 +26,7 @@ auth:
 agent:
   heartbeat_timeout: 60s
 
-timezone: Local                 # must match the agents' timezone; used for schedule prediction
+timezone: Local                 # must match the agents' timezone; used for schedule prediction and web UI times
 
 assistant:                      # read-only AI assistant (OpenAI Responses API); questions and tool results are sent to OpenAI
   enabled: false

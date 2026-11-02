@@ -29,6 +29,30 @@ func TestParseExample(t *testing.T) {
 	}
 }
 
+func TestZone(t *testing.T) {
+	for tz, want := range map[string]string{"Europe/Berlin": "Europe/Berlin", "UTC": "UTC"} {
+		cfg, err := Parse([]byte("timezone: " + tz))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Zone != want {
+			t.Errorf("timezone %s: zone = %q, want %q", tz, cfg.Zone, want)
+		}
+	}
+	for env, want := range map[string]string{
+		"Europe/Berlin":                     "Europe/Berlin",
+		":Asia/Shanghai":                    "Asia/Shanghai",
+		"/usr/share/zoneinfo/Europe/Berlin": "Europe/Berlin",
+		"":                                  "UTC",
+		"/nonexistent/zoneinfo/Not/A_Zone":  "",
+	} {
+		t.Setenv("TZ", env)
+		if got := zoneName("Local"); got != want {
+			t.Errorf("TZ=%q: zone = %q, want %q", env, got, want)
+		}
+	}
+}
+
 func TestPasswordFromEnv(t *testing.T) {
 	t.Setenv(EnvDBPassword, "p@ss/word")
 	cfg, err := Parse([]byte("database: {password: inline}"))

@@ -8,6 +8,7 @@ import type { CustomSeriesRenderItemAPI, CustomSeriesRenderItemParams, CustomSer
 import { datetime, duration, goDuration, parseDuration, statusText, typeText } from '@/format'
 import type { Job, Schedule } from '@/types'
 import { chartColors } from '@/theme'
+import { toLocal } from '@/timezone'
 import { locale, t } from '@/i18n'
 
 echarts.use([CustomChart, BarChart, GridComponent, TooltipComponent, DataZoomComponent, MarkLineComponent, MarkAreaComponent, CanvasRenderer])
@@ -33,6 +34,9 @@ const statusColor = computed<Record<string, string>>(() => ({
 }))
 
 const ms = (s?: string) => (s ? new Date(s).getTime() : NaN)
+// The time axis works in the browser's time zone; x positions hold the
+// display time zone's wall clock (see timezone.ts).
+const x = (s?: string | number) => (s === undefined ? NaN : toLocal(typeof s === 'number' ? s : new Date(s)).getTime())
 
 function render() {
   if (!chart) return
@@ -42,16 +46,17 @@ function render() {
   const rows = [...props.projects]
   for (const r of [...s.runs.map((r) => r.project), ...s.actual.map((j) => j.project)]) if (!rows.includes(r)) rows.push(r)
   const idx = (p: string) => rows.indexOf(p)
-  const from = ms(s.from)
-  const to = ms(s.to)
+  const from = x(s.from)
+  const to = x(s.to)
+  const now = x(Date.now())
 
   // [row, start, end, kind, index]
   const predicted = s.runs
-    .map((r, i) => (r.superseded ? [idx(r.project), ms(r.at), ms(r.at), 'superseded', i] : [idx(r.project), ms(r.start), ms(r.end), r.type, i]))
+    .map((r, i) => (r.superseded ? [idx(r.project), x(r.at), x(r.at), 'superseded', i] : [idx(r.project), x(r.start), x(r.end), r.type, i]))
   const actual = s.actual
     .filter((j) => j.started_at)
-    .map((j, i) => [idx(j.project), ms(j.started_at), j.finished_at ? ms(j.finished_at) : Date.now(), j.status, i])
-  const planned = s.runs.map((r, i) => [idx(r.project), ms(r.at), i])
+    .map((j, i) => [idx(j.project), x(j.started_at), j.finished_at ? x(j.finished_at) : now, j.status, i])
+  const planned = s.runs.map((r, i) => [idx(r.project), x(r.at), i])
 
   const renderBar =
     (lane: 'top' | 'bottom') =>
@@ -80,7 +85,7 @@ function render() {
     }
 
   const hours = s.hours.map((h) => ({
-    value: [ms(h.hour) + 1800_000, parseDuration(h.total) / 60],
+    value: [x(h.hour) + 1800_000, parseDuration(h.total) / 60],
     itemStyle: { color: h.overloaded ? col.failed : col.load, borderRadius: [2, 2, 0, 0] },
     hour: h,
   }))
@@ -141,7 +146,7 @@ function render() {
             symbol: 'none',
             lineStyle: { color: col.warning, type: 'dashed' },
             label: { show: false },
-            data: Date.now() > from && Date.now() < to ? [{ xAxis: Date.now() }] : [],
+            data: now > from && now < to ? [{ xAxis: now }] : [],
           },
         },
         {

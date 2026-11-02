@@ -1,6 +1,8 @@
-// Formatting helpers. Times are shown in the browser's time zone (PRD 9).
+// Formatting helpers. Times are shown in the server's time zone, see
+// timezone.ts.
 
 import { keyed, t } from '@/i18n'
+import { wallClock } from '@/timezone'
 
 const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
@@ -24,14 +26,23 @@ const pad = (n: number) => String(n).padStart(2, '0')
 export function datetime(s?: string | null): string {
   if (!s) return '-'
   const d = new Date(s)
-  if (isNaN(d.getTime()) || d.getFullYear() < 2) return '-'
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  if (isNaN(d.getTime()) || d.getUTCFullYear() < 2) return '-'
+  const w = wallClock(d)
+  return `${w.year}-${pad(w.month)}-${pad(w.day)} ${pad(w.hour)}:${pad(w.minute)}:${pad(w.second)}`
 }
 
 export function shortTime(s?: string | null): string {
   if (!s) return '-'
   const d = new Date(s)
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (isNaN(d.getTime())) return '-'
+  const w = wallClock(d)
+  return `${pad(w.month)}-${pad(w.day)} ${pad(w.hour)}:${pad(w.minute)}`
+}
+
+// clock formats the time of day, for example "14:05:09".
+export function clock(d: Date): string {
+  const w = wallClock(d)
+  return `${pad(w.hour)}:${pad(w.minute)}:${pad(w.second)}`
 }
 
 // ago describes how long ago s was, for example "3 minutes ago".

@@ -544,6 +544,6 @@ podman rm -f backup-server
 ## 注意事项
 
 - **Web 用户 IP：** server 收到的 Web 请求都来自 pod 内的 nginx。所以审计日志和会话中的 Web 用户 IP 会显示为 `127.0.0.1`。按 IP 限制登录失败的功能也会把所有 Web 用户视为同一个来源；按用户名的限制不受影响。需要查看用户真实 IP 时，请查看 nginx 访问日志。Agent 直接连接 server，记录的仍然是真实 IP。
-- **时区：** `timezone` 必须与 agent 主机一致，否则 Web 页面上的计划时间预测会出现偏差。
+- **时区：** `timezone` 必须与 agent 主机一致，否则 Web 页面上的计划时间预测会出现偏差。Web 页面上的所有时间都按这个时区显示，与浏览器所在时区无关。
 - **PostgreSQL 版本：** 本文使用与 CI 相同的 `postgres:17`。如果改用 18，需要把数据目录挂载点改为 `/var/lib/postgresql`。
 - **请求大小：** nginx 的 `client_max_body_size` 为 `1m`，与 server 的 JSON 请求大小上限一致。

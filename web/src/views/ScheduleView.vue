@@ -9,6 +9,7 @@ import type { Host, Project, Schedule } from '@/types'
 import GanttChart from '@/components/GanttChart.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { t } from '@/i18n'
+import { fromLocal, toLocal } from '@/timezone'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,7 +34,9 @@ async function load() {
   loading.value = true
   try {
     const w = windows[win.value]
-    const from = new Date(Math.floor(Date.now() / 3600_000) * 3600_000 - w.before * 3600_000)
+    const hour = toLocal(Date.now())
+    hour.setMinutes(0, 0, 0)
+    const from = new Date(fromLocal(hour).getTime() - w.before * 3600_000)
     ;[schedule.value, projects.value] = await Promise.all([
       api.get<Schedule>('/schedule', { host_id: hostId.value, from: from.toISOString(), hours: w.hours }),
       api.get<Project[]>('/projects', { host_id: hostId.value }),

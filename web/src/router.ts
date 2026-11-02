@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { loadUser, signedOut, user } from './auth'
 import { setUnauthorizedHandler } from './api'
 import { t } from './i18n'
+import { loadZone } from './timezone'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -42,6 +43,7 @@ router.beforeEach(async (to) => {
   if (!u) return { name: 'login', query: { redirect: to.fullPath } }
   // The initial password must be changed first (PRD U-2).
   if (u.must_change_password && !to.meta.allowMustChange) return { name: 'password' }
+  if (!u.must_change_password) await loadZone()
   return true
 })
 

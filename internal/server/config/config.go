@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -44,6 +46,9 @@ type Config struct {
 
 	// Location is the parsed Timezone.
 	Location *time.Location `yaml:"-"`
+	// Zone is the IANA name of Location, with "Local" resolved; empty when
+	// the local time zone has no known name. The web UI shows times in it.
+	Zone string `yaml:"-"`
 }
 
 // TLSConfig is the server certificate issued by `backup-server cert issue`.
@@ -275,7 +280,65 @@ func (c *Config) validate() error {
 		add("timezone %q: %v", c.Timezone, err)
 	}
 	c.Location = loc
+	if err == nil {
+		c.Zone = zoneName(c.Timezone)
+	}
 	return errors.Join(errs...)
+}
+
+// zoneName returns the IANA name of a time zone accepted by
+// time.LoadLocation, resolving "Local" from $TZ or /etc/localtime the way the
+// Go runtime does. It returns "" when the local zone has no known name.
+func zoneName(tz string) string {
+	switch tz {
+	case "", "UTC":
+		return "UTC"
+	case "Local":
+	default:
+		return tz
+	}
+	if v, ok := os.LookupEnv("TZ"); ok {
+		v = strings.TrimPrefix(v, ":")
+		if v == "" || v == "UTC" {
+			return "UTC"
+		}
+		if !filepath.IsAbs(v) {
+			return v
+		}
+		return zoneinfoName(v)
+	}
+	p, err := os.Readlink("/etc/localtime")
+	if errors.Is(err, fs.ErrNotExist) {
+		return "UTC"
+	}
+	if err == nil {
+		if name := zoneinfoName(p); name != "" {
+			return name
+		}
+	}
+	if b, err := os.ReadFile("/etc/timezone"); err == nil {
+		if name := strings.TrimSpace(string(b)); name != "" {
+			if _, err := time.LoadLocation(name); err == nil {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// zoneinfoName extracts "Europe/Berlin" from a path such as
+// /usr/share/zoneinfo/Europe/Berlin.
+func zoneinfoName(path string) string {
+	const dir = "zoneinfo/"
+	i := strings.LastIndex(path, dir)
+	if i < 0 {
+		return ""
+	}
+	name := path[i+len(dir):]
+	if _, err := time.LoadLocation(name); err != nil {
+		return ""
+	}
+	return name
 }
 
 // DSN returns the PostgreSQL connection URL.

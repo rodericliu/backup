@@ -106,6 +106,18 @@ func (s *Server) hostSchedule(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, http.StatusOK, resp)
 }
 
+// ServerInfo is the response of GET /info.
+type ServerInfo struct {
+	// Timezone is the IANA time zone the web UI shows times in: the
+	// configured timezone, which matches the agents'. Empty when the server
+	// runs with an unnamed local time zone; the browser's is used then.
+	Timezone string `json:"timezone"`
+}
+
+func (s *Server) info(w http.ResponseWriter, r *http.Request) error {
+	return writeJSON(w, http.StatusOK, ServerInfo{Timezone: s.cfg.Zone})
+}
+
 // zoneName names a location with its UTC offset at t, for example
 // "Asia/Shanghai (UTC+08:00)"; "Local" is shown by its abbreviation.
 func zoneName(loc *time.Location, t time.Time) string {
