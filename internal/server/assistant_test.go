@@ -350,3 +350,106 @@ func TestRedact(t *testing.T) {
 		}
 	}
 }
+
+func TestAssistantKeySettings(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.admin()
+	f := &fakeModel{}
+	ts := httptest.NewServer(f)
+	defer ts.Close()
+	a := &e.srv.cfg.Assistant
+	a.Enabled, a.BaseURL, a.Models, a.APIKeyFile = true, ts.URL, []string{"gpt-test"}, ""
+	t.Setenv("BACKUP_OPENAI_API_KEY", "")
+
+	// Enabled without a key: the server starts and the assistant is hidden.
+	if err := e.srv.Bootstrap(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var st AssistantSettings
+	var info AssistantInfo
+	do(t, admin, "GET", e.api("/settings/assistant"), nil, &st)
+	do(t, admin, "GET", e.api("/assistant/config"), nil, &info)
+	if !st.Enabled || st.Active || st.Source != "" || info.Enabled {
+		t.Errorf("no key: settings = %+v, info = %+v", st, info)
+	}
+	if code := do(t, admin, "POST", e.api("/settings/assistant/test"), nil, nil); code != http.StatusBadRequest {
+		t.Errorf("test without key = %d", code)
+	}
+
+	for _, bad := range []string{"", "  ", "sk-has space", "sk-ключ"} {
+		if code := do(t, admin, "PUT", e.api("/settings/assistant"), apiKeyRequest{APIKey: bad}, nil); code != http.StatusBadRequest {
+			t.Errorf("key %q = %d", bad, code)
+		}
+	}
+
+	// A key is tested without saving it.
+	var res KeyTestResult
+	if code := do(t, admin, "POST", e.api("/settings/assistant/test"), keyTestRequest{APIKey: "sk-test-1234567890"}, &res); code != http.StatusOK || !res.OK || res.Model != "gpt-test" {
+		t.Errorf("test = %d %+v", code, res)
+	}
+	do(t, admin, "GET", e.api("/settings/assistant"), nil, &st)
+	if st.Active {
+		t.Error("testing a key saved it")
+	}
+
+	const key = "sk-proj-secret-abcd"
+	if code := do(t, admin, "PUT", e.api("/settings/assistant"), apiKeyRequest{APIKey: " " + key + "\n"}, &st); code != http.StatusOK ||
+		!st.Active || st.Source != keySourceDatabase || st.Hint != "…abcd" || st.UpdatedBy != "admin" || st.UpdatedAt.IsZero() {
+		t.Fatalf("put = %d %+v", code, st)
+	}
+	if c := e.srv.assistantClient(); c == nil || c.APIKey != key {
+		t.Errorf("client = %+v", c)
+	}
+	do(t, admin, "GET", e.api("/assistant/config"), nil, &info)
+	if !info.Enabled {
+		t.Error("assistant hidden with a key")
+	}
+
+	// The key is stored encrypted and never returned.
+	var raw map[string]any
+	if err := e.store.Setting(t.Context(), settingAssistantKey, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, url := range []string{"/settings/assistant", "/audit-logs"} {
+		req, _ := http.NewRequest("GET", e.api(url), nil)
+		resp, err := admin.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if strings.Contains(string(b), key) {
+			t.Errorf("%s returns the key: %s", url, b)
+		}
+	}
+	if b, _ := json.Marshal(raw); strings.Contains(string(b), key) {
+		t.Errorf("setting holds the plain key: %s", b)
+	}
+
+	// The saved key survives a restart and precedes the environment.
+	t.Setenv("BACKUP_OPENAI_API_KEY", "sk-from-environment")
+	e.srv.setAssistant("", apiKeyState{})
+	if err := e.srv.loadAssistant(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if c := e.srv.assistantClient(); c == nil || c.APIKey != key {
+		t.Errorf("reloaded client = %+v", c)
+	}
+	if code := do(t, admin, "POST", e.api("/settings/assistant/test"), nil, &res); code != http.StatusOK || !res.OK {
+		t.Errorf("test current key = %d %+v", code, res)
+	}
+
+	// Deleting falls back to the environment.
+	if code := do(t, admin, "DELETE", e.api("/settings/assistant"), nil, &st); code != http.StatusOK || st.Source != "env" || !st.Active {
+		t.Errorf("delete = %d %+v", code, st)
+	}
+	if c := e.srv.assistantClient(); c == nil || c.APIKey != "sk-from-environment" {
+		t.Errorf("client after delete = %+v", c)
+	}
+
+	var logs List[store.AuditLog]
+	do(t, admin, "GET", e.api("/audit-logs?target_type=setting"), nil, &logs)
+	if logs.Total != 2 || logs.Items[0].Action != auditAssistantKeyDelete || logs.Items[1].Action != auditAssistantKeyUpdate || logs.Items[1].Detail["hint"] != "…abcd" {
+		t.Errorf("audit = %+v", logs.Items)
+	}
+}

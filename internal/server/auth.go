@@ -45,10 +45,12 @@ func currentUser(r *http.Request) *store.User {
 
 // Bootstrap creates the bootstrap administrator when there are no users and
 // logs its random initial password, which must be changed at first login
-// (PRD U-2).
+// (PRD U-2). It then loads the assistant API key.
 func (s *Server) Bootstrap(ctx context.Context) error {
-	_, err := s.bootstrap(ctx)
-	return err
+	if _, err := s.bootstrap(ctx); err != nil {
+		return err
+	}
+	return s.loadAssistant(ctx)
 }
 
 // bootstrap returns the initial password, or "" when users already exist.

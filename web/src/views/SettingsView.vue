@@ -5,6 +5,7 @@ import { user } from '@/auth'
 import { datetime } from '@/format'
 import UsersPanel from './settings/UsersPanel.vue'
 import AuditPanel from './settings/AuditPanel.vue'
+import AssistantPanel from './settings/AssistantPanel.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const route = useRoute()
@@ -29,6 +30,7 @@ onMounted(async () => {
     <el-tabs v-model="tab">
       <el-tab-pane :label="$t('settings.users')" name="users" lazy><UsersPanel /></el-tab-pane>
       <el-tab-pane :label="$t('settings.audit')" name="audit" lazy><AuditPanel /></el-tab-pane>
+      <el-tab-pane :label="$t('settings.assistant')" name="assistant" lazy><AssistantPanel /></el-tab-pane>
       <el-tab-pane :label="$t('settings.about')" name="about" lazy>
         <el-descriptions :column="1" border class="about">
           <el-descriptions-item :label="$t('users.me')">{{ user?.username }}</el-descriptions-item>

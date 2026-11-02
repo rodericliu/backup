@@ -337,6 +337,26 @@ export interface AssistantInfo {
   models: string[]
 }
 
+// AssistantSettings never contains the API key itself.
+export interface AssistantSettings {
+  enabled: boolean
+  active: boolean
+  source: '' | 'database' | 'env' | 'file'
+  hint?: string
+  updated_at?: string
+  updated_by?: string
+  error?: string
+  base_url: string
+  models: string[]
+}
+
+export interface KeyTestResult {
+  ok: boolean
+  model: string
+  error?: string
+  latency_ms: number
+}
+
 export interface AssistantSession {
   id: number
   title: string

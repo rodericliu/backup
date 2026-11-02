@@ -57,8 +57,11 @@ type Server struct {
 	hub     hub
 	events  broker
 
-	// ai is nil when the assistant is disabled.
-	ai *assistant.Client
+	// ai is nil when the assistant is disabled or has no API key; aiKey
+	// describes the key. Both are guarded by aiMu.
+	aiMu  sync.RWMutex
+	ai    *assistant.Client
+	aiKey apiKeyState
 	// aiBusy holds the sessions generating an answer.
 	aiBusy  sync.Map
 	aiSlots chan struct{}
@@ -89,7 +92,6 @@ func New(opts Options) *Server {
 		web:    http.NewServeMux(),
 		agent:  http.NewServeMux(),
 
-		ai:      newAssistant(&opts.Config.Assistant),
 		aiSlots: make(chan struct{}, maxConcurrentAnswers),
 	}
 	s.routes()
@@ -148,6 +150,10 @@ func (s *Server) routes() {
 	s.webAPI("GET /events/stream", s.eventStream)
 
 	s.webAPI("GET /assistant/config", s.assistantInfo)
+	s.webAPI("GET /settings/assistant", s.getAssistantSettings)
+	s.webAPI("PUT /settings/assistant", s.putAssistantKey)
+	s.webAPI("DELETE /settings/assistant", s.deleteAssistantKey)
+	s.webAPI("POST /settings/assistant/test", s.testAssistantKey)
 	s.webAPI("GET /assistant/sessions", s.listAssistantSessions)
 	s.webAPI("POST /assistant/sessions", s.createAssistantSession)
 	s.webAPI("GET /assistant/sessions/{id}", s.getAssistantSession)

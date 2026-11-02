@@ -44,8 +44,10 @@ export const draft = ref('')
 
 let controller: AbortController | null = null
 
-export async function loadInfo() {
-  if (info.value) return
+// loadInfo fetches whether the assistant is available; force refreshes it
+// after the API key changed.
+export async function loadInfo(force = false) {
+  if (info.value && !force) return
   try {
     info.value = await api.get<AssistantInfo>('/assistant/config')
     if (!info.value.models.includes(model.value)) model.value = info.value.models[0] ?? ''

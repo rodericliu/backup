@@ -87,12 +87,12 @@ Web 右上角的“助手”可以用自然语言询问备份情况，例如“�
 
 启用：
 
-```bash
-install -m 600 -o backup-server /dev/null /etc/backup-server/openai.key
-echo 'sk-...' > /etc/backup-server/openai.key      # 或设置环境变量 BACKUP_OPENAI_API_KEY
-# server.yaml: assistant.enabled: true，按需修改 models
-systemctl restart backup-server
-```
+1. `server.yaml` 中设置 `assistant.enabled: true`，按需修改 `models`，重启 backup-server
+2. 在 Web 的“设置 → AI 助手”中填写 API key，可先“测试连接”，保存后立即生效，无需重启
+
+- key 用 `master.key` 加密（AES-256-GCM）后保存在数据库 `settings` 表中，保存后页面只显示末 4 位；设置和清除都记入审计日志。**备份数据库时须同时备份 `master.key`**，否则 key 和 MySQL 密码都无法解密
+- 也可以继续用环境变量 `BACKUP_OPENAI_API_KEY` 或 `api_key_file` 提供 key；优先级为：网页设置 > 环境变量 > `api_key_file`。在网页上清除 key 后回退到后两者
+- 启用了助手但没有任何可用 key 时，backup-server 照常启动，只是不显示助手
 
 需要 backup-server 能访问 `assistant.base_url`（默认 `https://api.openai.com/v1`），走代理时设置 `HTTPS_PROXY`。
 

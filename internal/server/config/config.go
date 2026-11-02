@@ -100,7 +100,8 @@ type AssistantConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// BaseURL is the API root, for a proxy or gateway.
 	BaseURL string `yaml:"base_url"`
-	// APIKeyFile holds the API key; EnvOpenAIKey overrides it.
+	// APIKeyFile holds the API key when none is set on the web; EnvOpenAIKey
+	// overrides it. Optional.
 	APIKeyFile string `yaml:"api_key_file"`
 	// Models are offered in the chat window; the first is the default.
 	Models []string `yaml:"models"`
@@ -112,32 +113,46 @@ type AssistantConfig struct {
 	// MaxToolRounds bounds the model requests of one answer.
 	MaxToolRounds int `yaml:"max_tool_rounds"`
 
-	// APIKey is read from APIKeyFile or EnvOpenAIKey by ReadAPIKey.
+	// APIKey is read from EnvOpenAIKey or APIKeyFile by ReadAPIKey.
 	APIKey string `yaml:"-"`
+	// APIKeySource is where APIKey was read from: KeySourceEnv,
+	// KeySourceFile, or empty when neither holds a key.
+	APIKeySource string `yaml:"-"`
 }
 
 // EnvOpenAIKey overrides assistant.api_key_file.
 const EnvOpenAIKey = "BACKUP_OPENAI_API_KEY"
 
-// ReadAPIKey loads the API key of an enabled assistant.
+// Sources of the assistant API key.
+const (
+	KeySourceEnv  = "env"
+	KeySourceFile = "file"
+)
+
+// ReadAPIKey loads the API key of an enabled assistant from EnvOpenAIKey or
+// APIKeyFile. A missing or empty file is not an error: the key can be set on
+// the web instead.
 func (a *AssistantConfig) ReadAPIKey() error {
+	a.APIKey, a.APIKeySource = "", ""
 	if !a.Enabled {
 		return nil
 	}
-	if k, ok := os.LookupEnv(EnvOpenAIKey); ok && k != "" {
-		a.APIKey = k
+	if k := strings.TrimSpace(os.Getenv(EnvOpenAIKey)); k != "" {
+		a.APIKey, a.APIKeySource = k, KeySourceEnv
 		return nil
 	}
 	if a.APIKeyFile == "" {
-		return fmt.Errorf("assistant: set api_key_file or %s", EnvOpenAIKey)
+		return nil
 	}
 	b, err := os.ReadFile(a.APIKeyFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("assistant: read API key: %w", err)
 	}
-	a.APIKey = string(bytes.TrimSpace(b))
-	if a.APIKey == "" {
-		return fmt.Errorf("assistant: %s is empty", a.APIKeyFile)
+	if k := string(bytes.TrimSpace(b)); k != "" {
+		a.APIKey, a.APIKeySource = k, KeySourceFile
 	}
 	return nil
 }

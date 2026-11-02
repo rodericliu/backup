@@ -48,4 +48,12 @@ func TestSettings(t *testing.T) {
 			t.Errorf("setting = %+v, want %+v", got, want)
 		}
 	}
+	for range 2 {
+		if err := s.DeleteSetting(ctx, "wecom"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Setting(ctx, "wecom", &got); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("deleted setting: err = %v, want ErrNotFound", err)
+	}
 }

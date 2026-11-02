@@ -123,16 +123,23 @@ func TestAssistantAPIKey(t *testing.T) {
 	if a.Models[0] != "gpt-6.1-sol" || a.BaseURL != "https://api.openai.com/v1" || a.MaxToolRounds != 8 {
 		t.Errorf("assistant defaults = %+v", a)
 	}
-	if err := a.ReadAPIKey(); err != nil || a.APIKey != "sk-file" {
-		t.Errorf("key from file = %q, %v", a.APIKey, err)
+	if err := a.ReadAPIKey(); err != nil || a.APIKey != "sk-file" || a.APIKeySource != KeySourceFile {
+		t.Errorf("key from file = %q %q, %v", a.APIKey, a.APIKeySource, err)
 	}
 	t.Setenv(EnvOpenAIKey, "sk-env")
-	if err := a.ReadAPIKey(); err != nil || a.APIKey != "sk-env" {
-		t.Errorf("key from environment = %q, %v", a.APIKey, err)
+	if err := a.ReadAPIKey(); err != nil || a.APIKey != "sk-env" || a.APIKeySource != KeySourceEnv {
+		t.Errorf("key from environment = %q %q, %v", a.APIKey, a.APIKeySource, err)
 	}
+	// Without a file or environment variable the key is set on the web.
 	t.Setenv(EnvOpenAIKey, "")
-	a.APIKeyFile = ""
+	for _, file := range []string{"", filepath.Join(t.TempDir(), "missing.key")} {
+		a.APIKeyFile = file
+		if err := a.ReadAPIKey(); err != nil || a.APIKey != "" || a.APIKeySource != "" {
+			t.Errorf("file %q: key = %q %q, %v", file, a.APIKey, a.APIKeySource, err)
+		}
+	}
+	a.APIKeyFile = t.TempDir()
 	if err := a.ReadAPIKey(); err == nil {
-		t.Error("no key: no error")
+		t.Error("unreadable key file: no error")
 	}
 }

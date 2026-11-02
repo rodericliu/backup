@@ -32,9 +32,11 @@ const actions = [
   'project_purge',
   'job_run',
   'job_cancel',
+  'assistant_key_update',
+  'assistant_key_delete',
 ]
 const actionText = keyed('audit.actions')
-const targets = ['user', 'host', 'project', 'job', 'register_token']
+const targets = ['user', 'host', 'project', 'job', 'register_token', 'setting']
 const targetText = keyed('audit.targets')
 
 const filter = reactive({ username: '', action: '', target_type: '', range: null as [Date, Date] | null })

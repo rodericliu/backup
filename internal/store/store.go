@@ -149,6 +149,12 @@ func (s *Store) SetSetting(ctx context.Context, key string, v any) error {
 	return dbError(err, "write setting %s", key)
 }
 
+// DeleteSetting removes a setting; removing a missing setting is not an error.
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	_, err := s.pool.Exec(ctx, "DELETE FROM settings WHERE key = $1", key)
+	return dbError(err, "delete setting %s", key)
+}
+
 // nullTime converts a zero time to NULL.
 func nullTime(t time.Time) *time.Time {
 	if t.IsZero() {

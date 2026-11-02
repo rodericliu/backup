@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/rodericliu/backup/internal/server/assistant"
-	"github.com/rodericliu/backup/internal/server/config"
 	"github.com/rodericliu/backup/internal/store"
 )
 
@@ -40,15 +39,6 @@ const (
 	maxConcurrentAnswers = 8
 )
 
-// newAssistant returns the client of the configured model, or nil when the
-// assistant is disabled.
-func newAssistant(cfg *config.AssistantConfig) *assistant.Client {
-	if !cfg.Enabled {
-		return nil
-	}
-	return &assistant.Client{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, ReasoningEffort: cfg.ReasoningEffort, HTTP: &http.Client{}}
-}
-
 // AssistantInfo is the response of GET /assistant/config.
 type AssistantInfo struct {
 	Enabled bool     `json:"enabled"`
@@ -56,18 +46,22 @@ type AssistantInfo struct {
 }
 
 func (s *Server) assistantInfo(w http.ResponseWriter, r *http.Request) error {
-	info := AssistantInfo{Enabled: s.ai != nil, Models: []string{}}
-	if s.ai != nil {
+	info := AssistantInfo{Enabled: s.assistantClient() != nil, Models: []string{}}
+	if info.Enabled {
 		info.Models = s.cfg.Assistant.Models
 	}
 	return writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) requireAssistant() error {
-	if s.ai == nil {
-		return newError(http.StatusNotFound, "ASSISTANT_DISABLED", "the assistant is not enabled in server.yaml")
+	if s.assistantClient() == nil {
+		return errAssistantDisabled()
 	}
 	return nil
+}
+
+func errAssistantDisabled() error {
+	return newError(http.StatusNotFound, "ASSISTANT_DISABLED", "the assistant is not enabled in server.yaml or has no API key")
 }
 
 func (s *Server) pathSession(r *http.Request) (*store.AssistantSession, error) {
@@ -255,6 +249,10 @@ func (s *Server) assistantChat(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	ai := s.assistantClient()
+	if ai == nil {
+		return errAssistantDisabled()
+	}
 	var req chatRequest
 	if err := readJSON(r, &req); err != nil {
 		return err
@@ -317,7 +315,7 @@ func (s *Server) assistantChat(w http.ResponseWriter, r *http.Request) error {
 
 	input := append(replayHistory(history), assistant.UserMessage(req.Content+s.contextNote(ctx, req.Context)))
 	start := time.Now()
-	res, runErr := s.ai.Run(ctx, assistant.Request{
+	res, runErr := ai.Run(ctx, assistant.Request{
 		Model: req.Model, Instructions: s.instructions(u, l), Input: input, Tools: s.assistantTools(),
 		MaxRounds: s.cfg.Assistant.MaxToolRounds, Timeout: s.cfg.Assistant.Timeout.Std(),
 	}, func(e assistant.Event) {

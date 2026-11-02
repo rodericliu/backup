@@ -206,9 +206,6 @@ func serve(cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := cfg.Assistant.ReadAPIKey(); err != nil {
-		return err
-	}
 	st, err := store.Open(ctx, cfg.Database.DSN(), cfg.Database.MaxConns)
 	if err != nil {
 		return err
