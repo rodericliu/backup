@@ -17,6 +17,16 @@ func TestCheckExampleConfig(t *testing.T) {
 	}
 }
 
+func TestCheckServerExampleConfig(t *testing.T) {
+	var out strings.Builder
+	if err := run([]string{"check", "-config", "../../deploy/agent-server.yaml.example"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "0 projects") {
+		t.Errorf("output missing %q:\n%s", "0 projects", out.String())
+	}
+}
+
 func TestCommands(t *testing.T) {
 	var out strings.Builder
 	if err := run([]string{"version"}, &out); err != nil || !strings.HasPrefix(out.String(), "backup-agent ") {

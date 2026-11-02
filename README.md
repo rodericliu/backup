@@ -37,7 +37,7 @@ systemctl enable --now backup-agent
 
 1. 在 Web 上生成注册 token，写入 `/etc/backup-agent/register.token`（0600）
 2. 把 server 的 `ca.crt` 拷贝到 `/etc/backup-agent/tls/ca.crt`
-3. 在 `agent.yaml` 中设置 `server_url: https://<server>:<agent_listen 端口>`，`systemctl restart backup-agent`
+3. 在 `agent.yaml` 中设置 `server_url: https://<server>:<agent_listen 端口>`，`systemctl restart backup-agent`；新装主机可直接使用 `deploy/agent-server.yaml.example`（不含 `projects`）
 4. agent 注册后主机出现在 Web 上；在 Web 上添加项目，agent 在下一次心跳（≤15s）拉取配置
 
 - 配置了 `server_url` 后，`agent.yaml` 中的 `projects` 被忽略；server 下发的配置缓存在本地 SQLite，server 不可用时按缓存继续备份，恢复后按顺序补传任务结果和事件

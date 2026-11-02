@@ -1,0 +1,26 @@
+# /etc/backup-agent/agent.yaml for an agent connected to backup-server (chmod 600).
+#
+# Projects, schedules and MySQL credentials are managed on the web and pushed by
+# the server; do not add a projects section here, it is ignored. The server
+# configuration is cached in state_dir and keeps backups running while the
+# server is unreachable. For standalone use see agent.yaml.example.
+
+server_url: https://backup-server.internal:9443          # server agent_listen address
+server_ca: /etc/backup-agent/tls/ca.crt                  # ca.crt from `backup-server cert init`
+register_token_file: /etc/backup-agent/register.token    # one-time token generated on the web
+
+state_dir: /var/lib/backup-agent
+backup_root: /data/backup        # mounted at the same path in every container
+lock_file: /run/backup-agent.lock
+timezone: Local                  # schedules align to local midnight
+podman: podman
+low_io_priority: true            # ionice -c3 / nice -n 19 for xtrabackup and zstd
+bitmap_alert_size: 10737418240   # warn when changed page bitmaps exceed 10 GiB
+
+zstd:                            # runs inside each container; zstd must be installed there
+  threads: 8
+  level: 3
+
+log:
+  level: info
+  dir: /var/log/backup-agent
