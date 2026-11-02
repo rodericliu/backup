@@ -1,12 +1,12 @@
 #!/bin/sh
 # Run once by the postgres image on an empty data directory
 # (/docker-entrypoint-initdb.d): creates the backup role, database and schema.
-# The password is read from the podman secret backup_db_password.
+# The password of the backup role is taken from BACKUP_DB_PASSWORD.
 set -eu
 
-pw=$(cat /run/secrets/backup_db_password)
+: "${BACKUP_DB_PASSWORD:?BACKUP_DB_PASSWORD is not set}"
 
-psql -v ON_ERROR_STOP=1 -v pw="$pw" --username "$POSTGRES_USER" --dbname postgres <<'SQL'
+psql -v ON_ERROR_STOP=1 -v pw="$BACKUP_DB_PASSWORD" --username "$POSTGRES_USER" --dbname postgres <<'SQL'
 CREATE ROLE backup WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT 30 PASSWORD :'pw';
 CREATE DATABASE backup WITH OWNER = backup ENCODING = 'UTF8' TEMPLATE = template0;
 REVOKE ALL ON DATABASE backup FROM PUBLIC;

@@ -55,7 +55,7 @@ systemctl enable --now backup-agent
 
 ## backup-server
 
-中心 Web 平台（P2 进行中）。需要一个由你创建的 PostgreSQL 库和账号，表结构在启动时自动迁移。
+中心 Web 平台（P2 进行中）。需要一个由你创建的 PostgreSQL 库和账号，表结构在启动时自动迁移。使用 Podman pod（nginx + backup-server + PostgreSQL）部署见 [docs/deploy-podman.md](docs/deploy-podman.md)。
 
 ```bash
 make build                                         # bin/backup-server（含 Web UI，需要 Node 24+）

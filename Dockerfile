@@ -1,17 +1,18 @@
-# Images of backup-server and of the nginx serving its web UI.
+# Images of backup-server and backup-web (nginx serving the web UI).
+#   REG=reg.ideawisegroup.com:1443/library
 #   V=$(git describe --tags --always --dirty)
-#   podman build --target server -t backup-server:$V --build-arg VERSION=$V .
-#   podman build --target nginx  -t backup-nginx:$V .
+#   podman build --target server -t $REG/backup-server:$V --build-arg VERSION=$V .
+#   podman build --target web    -t $REG/backup-web:$V .
+# See docs/deploy-podman.md.
 
-FROM --platform=$BUILDPLATFORM docker.io/library/node:24-alpine AS web
+FROM docker.io/library/node:24-alpine AS ui
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27-alpine AS build
-ARG TARGETOS TARGETARCH
+FROM docker.io/library/golang:1.27-alpine AS build
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -19,17 +20,17 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY web/embed.go web/
-COPY --from=web /src/web/dist/ web/dist/
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+COPY --from=ui /src/web/dist/ web/dist/
+RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X github.com/rodericliu/backup/internal/version.Version=${VERSION}" \
     -o /out/backup-server ./cmd/backup-server
 
-FROM docker.io/library/nginx:stable-alpine AS nginx
+FROM docker.io/library/nginx:stable-alpine AS web
 RUN rm -rf /usr/share/nginx/html/* /etc/nginx/conf.d/default.conf \
-    && mkdir -p /etc/nginx/snippets /etc/nginx/certs /etc/nginx/backup-ca /var/www/acme
+    && mkdir -p /etc/nginx/snippets /etc/nginx/certs /etc/nginx/backup-ca
 COPY deploy/nginx/security-headers.conf deploy/nginx/backup-proxy.conf /etc/nginx/snippets/
 COPY deploy/nginx/backup.conf /etc/nginx/conf.d/backup.conf
-COPY --from=web /src/web/dist/ /usr/share/nginx/html/
+COPY --from=ui /src/web/dist/ /usr/share/nginx/html/
 EXPOSE 80 443
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:8081/nginx-health || exit 1
